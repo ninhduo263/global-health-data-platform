@@ -1,8 +1,11 @@
-date_reported,country_code,country_name,who_region,new_cases,cumulative_cases,new_deaths,cumulative_deaths
-2021-08-15,VNM,Vietnam,WPRO,9580,275044,337,5774
-2021-08-16,VNM,Vietnam,WPRO,8644,283696,355,6134
-2021-08-15,USA,United States,AMRO,42150,36850120,285,622140
-2021-08-16,USA,United States,AMRO,141320,36991440,610,622750
-2021-08-15,DEU,Germany,EURO,3668,3821012,14,91870
-2021-08-16,DEU,Germany,EURO,5120,3826132,29,91899
-
+country_code,country_name,continent_code,continent_name,who_region,population,gdp,beds_per_1000,life_expectancy
+BRA,Brazil,SA,South America,AMR,210306411,20024.7,2.518,74.87
+FRA,France,EU,Europe,EUR,66277412,55124.54,5.647,82.48
+DEU,Germany,EU,Europe,EUR,84086227,62823.77,7.55,80.58
+IND,India,AS,Asia,SEAR,1425423209,10039.07,1.595,71.7
+JPN,Japan,AS,Asia,WPR,124997585,48283.37,12.587,84.05
+SGP,Singapore,AS,Asia,WPR,5649888,139592.61,2.812,82.92
+KOR,Republic of Korea,AS,Asia,WPR,51782515,55697.09,12.805,82.73
+GBR,United Kingdom of Great Britain and Northern Ireland,EU,Europe,EUR,68179315,53993.12,2.421,81.07
+USA,United States of America,NA,North America,AMR,341534041,76931.31,2.684,77.98
+VNM,Viet Nam,AS,Asia,WPR,99680656,15457.35,2.517,74.5

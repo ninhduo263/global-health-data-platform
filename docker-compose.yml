@@ -12,8 +12,8 @@ x-airflow-common: &airflow-common
     AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
     AIRFLOW__CORE__LOAD_EXAMPLES: "false"
     AIRFLOW__WEBSERVER__SECRET_KEY: "airflow_covid19_secret_key"
-    # Cài đặt thêm thư viện giao tiếp với MinIO (boto3) và PostgreSQL (psycopg2)
-    _PIP_ADDITIONAL_REQUIREMENTS: "boto3 psycopg2-binary requests pandas"
+    # Cài đặt thêm thư viện giao tiếp với MinIO (boto3), PostgreSQL (psycopg2) và MySQL OLTP (pymysql)
+    _PIP_ADDITIONAL_REQUIREMENTS: "boto3 psycopg2-binary pymysql requests pandas"
     # Biến môi trường truyền vào DAG
     MINIO_ENDPOINT: "http://minio:9000"
     MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
@@ -24,6 +24,11 @@ x-airflow-common: &airflow-common
     DWH_DB: ${POSTGRES_DB:-health_dwh}
     DWH_USER: ${POSTGRES_USER:-dwh_admin}
     DWH_PASSWORD: ${POSTGRES_PASSWORD:-dwh_password}
+    OLTP_HOST: "mysql-oltp"
+    OLTP_PORT: "3306"
+    OLTP_DB: ${MYSQL_DATABASE:-vaccination_oltp}
+    OLTP_USER: ${MYSQL_USER:-oltp_user}
+    OLTP_PASSWORD: ${MYSQL_PASSWORD:-oltp_password}
   volumes:
     - ./airflow/dags:/opt/airflow/dags
     - ./airflow/logs:/opt/airflow/logs
@@ -248,19 +253,14 @@ services:
     volumes:
       - superset_home:/app/superset_home
       - ./config/superset/superset_config.py:/app/pythonpath/superset_config.py:ro
-    command: >
-      /bin/sh -c "
-      pip install psycopg2-binary &&
-      superset db upgrade &&
-      superset fab create-admin
-        --username $${SUPERSET_ADMIN_USER}
-        --firstname Superset
-        --lastname Admin
-        --email $${SUPERSET_ADMIN_EMAIL}
-        --password $${SUPERSET_ADMIN_PASSWORD} &&
-      superset init &&
-      /usr/bin/run-server.sh
-      "
+    command:
+      - /bin/sh
+      - -c
+      - |
+        superset db upgrade &&
+        superset fab create-admin --username "$${SUPERSET_ADMIN_USER}" --firstname Superset --lastname Admin --email "$${SUPERSET_ADMIN_EMAIL}" --password "$${SUPERSET_ADMIN_PASSWORD}" &&
+        superset init &&
+        /usr/bin/run-server.sh
     depends_on:
       postgres-dwh:
         condition: service_healthy

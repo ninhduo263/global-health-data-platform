@@ -1,0 +1,8 @@
+date_reported,country_code,country_name,who_region,new_cases,cumulative_cases,new_deaths,cumulative_deaths
+2021-08-15,VNM,Vietnam,WPRO,9580,275044,337,5774
+2021-08-16,VNM,Vietnam,WPRO,8644,283696,355,6134
+2021-08-15,USA,United States,AMRO,42150,36850120,285,622140
+2021-08-16,USA,United States,AMRO,141320,36991440,610,622750
+2021-08-15,DEU,Germany,EURO,3668,3821012,14,91870
+2021-08-16,DEU,Germany,EURO,5120,3826132,29,91899
+

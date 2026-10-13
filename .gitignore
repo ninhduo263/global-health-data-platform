@@ -1,0 +1,91 @@
+# ============================================================================
+# .gitignore - PUBLIC HEALTH DATA PLATFORM (COVID-19 / BỆNH TRUYỀN NHIỄM)
+# ============================================================================
+
+# --- 1. Environment & Secrets ---
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# --- 2. Apache Airflow ---
+airflow/logs/*
+!airflow/logs/.gitkeep
+airflow/airflow.cfg
+airflow/webserver_config.py
+airflow/airflow.db
+airflow/standalone_admin_password.txt
+unittests.cfg
+
+# --- 3. Data & Local Volumes (Docker / MinIO / Databases) ---
+# Bỏ qua các file dữ liệu lớn tải về trong quá trình chạy pipeline
+data/staging/
+data/processed/
+data/raw/*.json
+data/raw/*.parquet
+data/raw/*.zip
+data/raw/*.gz
+# Giữ lại file CSV mẫu nhỏ để chạy thử nghiệm pipeline
+!data/raw/who_covid_sample.csv
+
+# Thư mục mount dữ liệu DB/MinIO/Kafka nếu chuyển sang bind-mount cục bộ
+volumes/
+postgres_data/
+mysql_data/
+minio_data/
+kafka_data/
+superset_home/
+
+# --- 4. Python & Virtual Environments ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.venv/
+venv/
+ENV/
+env/
+
+# --- 5. Jupyter Notebook / Testing / Coverage ---
+.ipynb_checkpoints/
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# --- 6. IDE & OS (Windows / macOS / VSCode / PyCharm) ---
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+*~
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.DS_Store
+
+# --- 7. Logs & Temporary Files ---
+*.log
+*.tmp
+*.bak
+tmp/
+temp/

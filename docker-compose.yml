@@ -1,0 +1,284 @@
+# ============================================================================
+# DOCKER COMPOSE - PUBLIC HEALTH DATA PLATFORM (COVID-19 / BỆNH TRUYỀN NHIỄM)
+# Môi trường tối ưu hóa cho Windows Docker Desktop (WSL2 Backend)
+# ============================================================================
+
+x-airflow-common: &airflow-common
+  image: apache/airflow:2.9.3-python3.11
+  environment: &airflow-common-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER:-dwh_admin}:${POSTGRES_PASSWORD:-dwh_password}@postgres-dwh:5432/${POSTGRES_DB:-health_dwh}
+    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY:-46BKJoQYlPPOexq0OhDZnIlNepKFf87WFwLbfzqDDho=}
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__WEBSERVER__SECRET_KEY: "airflow_covid19_secret_key"
+    # Cài đặt thêm thư viện giao tiếp với MinIO (boto3) và PostgreSQL (psycopg2)
+    _PIP_ADDITIONAL_REQUIREMENTS: "boto3 psycopg2-binary requests pandas"
+    # Biến môi trường truyền vào DAG
+    MINIO_ENDPOINT: "http://minio:9000"
+    MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+    MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin123}
+    MINIO_BUCKET_NAME: ${MINIO_BUCKET_NAME:-covid19-landing-zone}
+    DWH_HOST: "postgres-dwh"
+    DWH_PORT: "5432"
+    DWH_DB: ${POSTGRES_DB:-health_dwh}
+    DWH_USER: ${POSTGRES_USER:-dwh_admin}
+    DWH_PASSWORD: ${POSTGRES_PASSWORD:-dwh_password}
+  volumes:
+    - ./airflow/dags:/opt/airflow/dags
+    - ./airflow/logs:/opt/airflow/logs
+    - ./airflow/plugins:/opt/airflow/plugins
+    - ./data:/opt/airflow/data
+  user: "${AIRFLOW_UID:-50000}:0"
+  depends_on:
+    postgres-dwh:
+      condition: service_healthy
+  networks:
+    - health_data_network
+
+services:
+  # ==========================================================================
+  # 1. OLTP SOURCE: MySQL 8.0 (Giả lập CSDL Tiêm chủng nội bộ)
+  # ==========================================================================
+  mysql-oltp:
+    image: mysql:8.0
+    container_name: mysql-oltp
+    restart: unless-stopped
+    ports:
+      - "3306:3306" # Host: 3306 -> Container: 3306
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root_password}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-vaccination_oltp}
+      MYSQL_USER: ${MYSQL_USER:-oltp_user}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-oltp_password}
+      TZ: Asia/Ho_Chi_Minh
+    volumes:
+      - mysql_oltp_data:/var/lib/mysql
+      - ./config/mysql/my.cnf:/etc/mysql/conf.d/my.cnf:ro
+      - ./scripts/sql/init-oltp.sql:/docker-entrypoint-initdb.d/init-oltp.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-root_password}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - health_data_network
+
+  # ==========================================================================
+  # 2. CDC STREAMING LAYER: Zookeeper, Kafka & Debezium Connect
+  # ==========================================================================
+  zookeeper:
+    image: quay.io/debezium/zookeeper:2.5
+    container_name: zookeeper
+    restart: unless-stopped
+    ports:
+      - "2181:2181"
+      - "2888:2888"
+      - "3888:3888"
+    networks:
+      - health_data_network
+
+  kafka:
+    image: quay.io/debezium/kafka:2.5
+    container_name: kafka
+    restart: unless-stopped
+    ports:
+      - "9092:9092"
+    environment:
+      ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
+    depends_on:
+      - zookeeper
+    volumes:
+      - kafka_data:/kafka/data
+    networks:
+      - health_data_network
+
+  debezium:
+    image: quay.io/debezium/connect:2.5
+    container_name: debezium
+    restart: unless-stopped
+    ports:
+      - "8083:8083" # REST API quản lý CDC Connectors
+    environment:
+      BOOTSTRAP_SERVERS: kafka:9092
+      GROUP_ID: 1
+      CONFIG_STORAGE_TOPIC: my_connect_configs
+      OFFSET_STORAGE_TOPIC: my_connect_offsets
+      STATUS_STORAGE_TOPIC: my_connect_statuses
+    depends_on:
+      mysql-oltp:
+        condition: service_healthy
+      kafka:
+        condition: service_started
+    networks:
+      - health_data_network
+
+  # ==========================================================================
+  # 3. DATA LAKE (LANDING ZONE): MinIO Object Storage
+  # Lưu ý: MinIO đã gỡ image minio/minio khỏi Docker Hub từ 2025/2026,
+  # sử dụng bản đóng gói tương thích hoàn toàn elestio/minio:latest
+  # ==========================================================================
+  minio:
+    image: elestio/minio:latest
+    container_name: minio
+    restart: unless-stopped
+    ports:
+      - "9000:9000" # S3 API Port
+      - "9001:9001" # MinIO Web Console
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin123}
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - health_data_network
+
+  # ==========================================================================
+  # 4. DATA WAREHOUSE: PostgreSQL 15 (Snowflake Schema)
+  # ==========================================================================
+  postgres-dwh:
+    image: postgres:15-alpine
+    container_name: postgres-dwh
+    restart: unless-stopped
+    ports:
+      - "5433:5432" # Ánh xạ cổng 5433 trên Windows Host để tránh đụng cổng 5432 mặc định
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-dwh_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dwh_password}
+      POSTGRES_DB: ${POSTGRES_DB:-health_dwh}
+      TZ: Asia/Ho_Chi_Minh
+    volumes:
+      - postgres_dwh_data:/var/lib/postgresql/data
+      - ./scripts/sql/init-dwh.sql:/docker-entrypoint-initdb.d/init-dwh.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-dwh_admin} -d ${POSTGRES_DB:-health_dwh}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - health_data_network
+
+  # ==========================================================================
+  # 5. ETL / ORCHESTRATION: Apache Airflow (Init, Webserver, Scheduler)
+  # ==========================================================================
+  airflow-init:
+    <<: *airflow-common
+    container_name: airflow-init
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        mkdir -p /opt/airflow/logs /opt/airflow/dags /opt/airflow/plugins
+        airflow db migrate
+        airflow users create \
+          --username "${AIRFLOW_ADMIN_USER:-admin}" \
+          --password "${AIRFLOW_ADMIN_PASSWORD:-admin}" \
+          --firstname "Data" \
+          --lastname "Engineer" \
+          --role "Admin" \
+          --email "${AIRFLOW_ADMIN_EMAIL:-admin@healthplatform.local}"
+        python3 -c "
+        import os, boto3
+        from botocore.exceptions import ClientError
+        s3 = boto3.client('s3', endpoint_url=os.getenv('MINIO_ENDPOINT', 'http://minio:9000'),
+                          aws_access_key_id=os.getenv('MINIO_ROOT_USER', 'minioadmin'),
+                          aws_secret_access_key=os.getenv('MINIO_ROOT_PASSWORD', 'minioadmin123'))
+        bucket = os.getenv('MINIO_BUCKET_NAME', 'covid19-landing-zone')
+        try:
+            s3.head_bucket(Bucket=bucket)
+        except ClientError:
+            s3.create_bucket(Bucket=bucket)
+            print(f'Created MinIO bucket: {bucket}')
+        " || true
+    environment:
+      <<: *airflow-common-env
+      _AIRFLOW_DB_MIGRATE: "true"
+      _AIRFLOW_WWW_USER_CREATE: "true"
+      _AIRFLOW_WWW_USER_USERNAME: ${AIRFLOW_ADMIN_USER:-admin}
+      _AIRFLOW_WWW_USER_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:-admin}
+
+  airflow-webserver:
+    <<: *airflow-common
+    container_name: airflow-webserver
+    restart: unless-stopped
+    command: webserver
+    ports:
+      - "8081:8080" # Ánh xạ cổng 8081 trên Windows Host -> 8080 trong Container
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+
+  airflow-scheduler:
+    <<: *airflow-common
+    container_name: airflow-scheduler
+    restart: unless-stopped
+    command: scheduler
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+
+  # ==========================================================================
+  # 6. BUSINESS INTELLIGENCE: Apache Superset
+  # ==========================================================================
+  superset:
+    image: apache/superset:3.1.1
+    container_name: superset
+    restart: unless-stopped
+    ports:
+      - "8089:8088" # Ánh xạ cổng 8089 trên Windows Host -> 8088 trong Container
+    environment:
+      SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY:-covid19_public_health_data_platform_secret_key_2026}
+      SUPERSET_CONFIG_PATH: /app/pythonpath/superset_config.py
+      SUPERSET_ADMIN_USER: ${SUPERSET_ADMIN_USER:-admin}
+      SUPERSET_ADMIN_PASSWORD: ${SUPERSET_ADMIN_PASSWORD:-admin}
+      SUPERSET_ADMIN_EMAIL: ${SUPERSET_ADMIN_EMAIL:-admin@healthplatform.local}
+    volumes:
+      - superset_home:/app/superset_home
+      - ./config/superset/superset_config.py:/app/pythonpath/superset_config.py:ro
+    command: >
+      /bin/sh -c "
+      pip install psycopg2-binary &&
+      superset db upgrade &&
+      superset fab create-admin
+        --username $${SUPERSET_ADMIN_USER}
+        --firstname Superset
+        --lastname Admin
+        --email $${SUPERSET_ADMIN_EMAIL}
+        --password $${SUPERSET_ADMIN_PASSWORD} &&
+      superset init &&
+      /usr/bin/run-server.sh
+      "
+    depends_on:
+      postgres-dwh:
+        condition: service_healthy
+    networks:
+      - health_data_network
+
+# ============================================================================
+# NETWORKS & PERSISTENT VOLUMES
+# ============================================================================
+networks:
+  health_data_network:
+    name: health_data_network
+    driver: bridge
+
+volumes:
+  mysql_oltp_data:
+  kafka_data:
+  minio_data:
+  postgres_dwh_data:
+  superset_home:
+

@@ -7,7 +7,7 @@ Hệ thống Data Platform cục bộ chạy trên Docker Compose (Windows WSL2)
 | Dịch vụ | Container Name | Địa chỉ truy cập (Host) | Tài khoản mặc định | Ghi chú |
 | :--- | :--- | :--- | :--- | :--- |
 | **PostgreSQL (DWH)** | `postgres-dwh` | `localhost:5433` | `dwh_admin` / `dwh_password` | Database: `health_dwh` (Schema: `dwh`) |
-| **MySQL (OLTP)** | `mysql-oltp` | `localhost:3306` | `root` / `root_password` | Database: `vaccination_oltp` (`oltp_user` / `oltp_password`) |
+| **MySQL (OLTP)** | `mysql-oltp` | `localhost:3307` | `root` / `root_password` | Database: `vaccination_oltp` (`oltp_user` / `oltp_password`) |
 | **MinIO API** | `minio` | `http://localhost:9000` | `minioadmin` / `minioadmin123` | S3-compatible endpoint |
 | **MinIO Console** | `minio` | `http://localhost:9001` | `minioadmin` / `minioadmin123` | Bucket mặc định: `covid19-landing-zone` |
 | **Airflow Webserver** | `airflow-webserver` | `http://localhost:8081` | `admin` / `admin` | DAG: `health_data_pipeline` |
@@ -15,19 +15,63 @@ Hệ thống Data Platform cục bộ chạy trên Docker Compose (Windows WSL2)
 | **Debezium Connect** | `debezium` | `http://localhost:8083` | *(REST API)* | Đăng ký connector từ `config/debezium/register-mysql-connector.json` |
 | **Kafka Broker** | `kafka` | `localhost:9092` | - | Internal: `kafka:9092` |
 
-## 2. Hướng dẫn khởi chạy trên Windows
+## 2. Khởi chạy trên Windows
 
 ```powershell
-# 1. Khởi tạo toàn bộ các container chạy ngầm
+# Chạy tại thư mục global-health-data-platform
 docker compose up -d
 
-# 2. Kiểm tra trạng thái các container
 docker compose ps
-
-# 3. Đăng ký Debezium MySQL CDC Connector (sau khi debezium đã khởi động xong)
-Invoke-RestMethod -Uri "http://localhost:8083/connectors/" `
-  -Method Post `
-  -ContentType "application/json" `
-  -InFile "config/debezium/register-mysql-connector.json"
 ```
 
+Compose tự chạy migration DWH, đăng ký Debezium connector và bật CDC consumer. Lần chạy đầu có thể mất vài phút để tải image và khởi tạo Airflow/Superset.
+
+## 3. Các luồng dữ liệu
+
+- DAG `health_data_pipeline` tải snapshot CSV lịch sử toàn cầu từ Our World in Data (OWID), đồng thời trích CSV WHO và hai bảng `vaccination_centers` / `vaccination_records` từ MySQL. Các file thô được lưu vào MinIO; dữ liệu OWID ở cấp quốc gia/ngày được upsert vào `dwh.fact_cases`.
+- Nguồn OWID gồm các quốc gia và vùng lãnh thổ có mã quốc gia 3 ký tự, với các trường hợp mắc/tử vong mới, tổng lũy kế và số liệu tiêm chủng. Dữ liệu lịch sử có sẵn từ năm 2020; ngày cuối cùng phụ thuộc snapshot OWID hiện hành (không phải luồng thời gian thực).
+- Debezium phát CDC cho hai bảng MySQL vào Kafka. Connector sử dụng tài khoản replication `oltp_user` (không dùng root); quyền replication được cấp trong `scripts/sql/init-oltp.sql`. Service `cdc-consumer` tự đăng ký/cập nhật connector; connector dùng `snapshot.mode=when_needed` để chụp snapshot ban đầu hoặc chụp lại khi binlog/offset cũ không còn khả dụng (ví dụ sau khi MySQL được tạo lại), rồi tiếp tục theo dõi thay đổi. Consumer upsert/xóa dữ liệu trong `dwh.dim_vaccination_center` và `dwh.fact_vaccination`. Giao dịch được xử lý idempotent; Kafka offset chỉ được commit sau khi transaction DWH thành công.
+- Migration `scripts/sql/upgrade-dwh.sql` chạy an toàn nhiều lần và tạo các bảng CDC cùng view phục vụ BI. View cũng được tạo mới khi PostgreSQL khởi tạo volume lần đầu.
+- MySQL dùng cổng host `3307` vì host đã có dịch vụ chiếm `3306`; các container vẫn kết nối nội bộ qua cổng `3306`.
+
+## 4. Tạo dashboard Superset
+
+Kết nối database trong Superset bằng PostgreSQL:
+
+| Trường | Giá trị |
+|---|---|
+| Host | `postgres-dwh` |
+| Port | `5432` |
+| Database | `health_dwh` |
+| Username / Password | `dwh_admin` / `dwh_password` |
+
+Trong Superset, vào **Data → Datasets → + Dataset**, chọn database trên, schema `dwh`, rồi thêm các view:
+
+- `vw_dashboard_cases` — dữ liệu ca mắc/tử vong và tiêm chủng OWID theo ngày, quốc gia, khu vực.
+- `vw_dashboard_vaccinations` — số lượt tiêm theo ngày, trung tâm, vaccine và số mũi.
+
+Sau lần nạp OWID, mở dataset `vw_dashboard_cases` trong Superset và đồng bộ/refresh danh sách cột để nhận các trường mới (`new_vaccinations`, `people_fully_vaccinated`, `total_cases`, `total_deaths`). Hai chart tiêm chủng đang có trong dashboard tạo từ CDC MySQL vẫn chỉ là dữ liệu mẫu nội bộ; muốn dashboard cũng thể hiện quy mô toàn cầu thì sửa dataset của chúng sang `vw_dashboard_cases`:
+
+1. **Ca mắc theo ngày và châu lục:** Time-series Line Chart, X-axis `report_date`, metric `SUM(new_cases)`, dimension `continent_name`.
+2. **Tử vong theo ngày và châu lục:** Time-series Line Chart, X-axis `report_date`, metric `SUM(new_deaths)`, dimension `continent_name`.
+3. **Số liều tiêm mới toàn cầu theo ngày:** Time-series Line Chart, X-axis `report_date`, metric `SUM(new_vaccinations)`.
+4. **Số người đã tiêm đầy đủ theo châu lục/ngày:** Time-series Line Chart, X-axis `report_date`, metric `SUM(people_fully_vaccinated)`, dimension `continent_name`. Cộng các quốc gia trong cùng một ngày; không cộng lũy kế qua nhiều ngày.
+
+Lưu từng chart, thêm chúng vào dashboard mới rồi nhấn **Save**. Để nạp snapshot OWID toàn cầu vào DWH lần đầu hoặc làm mới thủ công, vào Airflow `http://localhost:8081`, mở DAG `health_data_pipeline` và chọn **Trigger DAG**. DAG sẽ tải lại snapshot, lưu bản thô vào MinIO và upsert idempotent theo quốc gia/ngày. Có thể kiểm tra khối lượng bằng truy vấn SQL:
+
+```sql
+SELECT COUNT(*) AS observations,
+       COUNT(DISTINCT country_code) AS countries,
+       MIN(report_date) AS first_date,
+       MAX(report_date) AS last_date
+FROM dwh.vw_dashboard_cases;
+```
+
+Luồng vaccine nội bộ MySQL là dữ liệu minh họa riêng; nó không đại diện cho tiêm chủng toàn cầu. Nếu view tiêm chủng nội bộ chưa có hàng, hãy kiểm tra trạng thái `cdc-consumer` và Debezium connector:
+
+```powershell
+docker compose logs --tail 50 cdc-consumer
+curl.exe http://localhost:8083/connectors/vaccination-oltp-connector/status
+```
+
+CDC consumer không đưa `citizen_hash` vào DWH; dashboard chỉ chứa số liệu tổng hợp. DAG extraction chỉ lưu dữ liệu MySQL thô vào bucket MinIO, không thay thế luồng CDC.

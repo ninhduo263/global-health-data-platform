@@ -13,7 +13,7 @@ x-airflow-common: &airflow-common
     AIRFLOW__CORE__LOAD_EXAMPLES: "false"
     AIRFLOW__WEBSERVER__SECRET_KEY: "airflow_covid19_secret_key"
     # Cài đặt thêm thư viện giao tiếp với MinIO (boto3) và PostgreSQL (psycopg2)
-    _PIP_ADDITIONAL_REQUIREMENTS: "boto3 psycopg2-binary requests pandas"
+    _PIP_ADDITIONAL_REQUIREMENTS: "boto3 psycopg2-binary requests pandas pymysql"
     # Biến môi trường truyền vào DAG
     MINIO_ENDPOINT: "http://minio:9000"
     MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
@@ -24,6 +24,11 @@ x-airflow-common: &airflow-common
     DWH_DB: ${POSTGRES_DB:-health_dwh}
     DWH_USER: ${POSTGRES_USER:-dwh_admin}
     DWH_PASSWORD: ${POSTGRES_PASSWORD:-dwh_password}
+    OLTP_HOST: mysql-oltp
+    OLTP_PORT: "3306"
+    OLTP_DATABASE: ${MYSQL_DATABASE:-vaccination_oltp}
+    OLTP_USER: ${MYSQL_ROOT_USER:-root}
+    OLTP_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root_password}
   volumes:
     - ./airflow/dags:/opt/airflow/dags
     - ./airflow/logs:/opt/airflow/logs
@@ -33,6 +38,10 @@ x-airflow-common: &airflow-common
   depends_on:
     postgres-dwh:
       condition: service_healthy
+    mysql-oltp:
+      condition: service_healthy
+    dwh-migrate:
+      condition: service_completed_successfully
   networks:
     - health_data_network
 
@@ -45,16 +54,20 @@ services:
     container_name: mysql-oltp
     restart: unless-stopped
     ports:
-      - "3306:3306" # Host: 3306 -> Container: 3306
+      - "3307:3306" # Host: 3307 -> Container: 3306
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root_password}
       MYSQL_DATABASE: ${MYSQL_DATABASE:-vaccination_oltp}
       MYSQL_USER: ${MYSQL_USER:-oltp_user}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:-oltp_password}
       TZ: Asia/Ho_Chi_Minh
+    command:
+      - --server-id=1
+      - --log-bin=mysql-bin
+      - --binlog-format=ROW
+      - --binlog-row-image=FULL
     volumes:
       - mysql_oltp_data:/var/lib/mysql
-      - ./config/mysql/my.cnf:/etc/mysql/conf.d/my.cnf:ro
       - ./scripts/sql/init-oltp.sql:/docker-entrypoint-initdb.d/init-oltp.sql:ro
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-root_password}"]
@@ -115,6 +128,38 @@ services:
     networks:
       - health_data_network
 
+  cdc-consumer:
+    build:
+      context: ./cdc
+    container_name: cdc-consumer
+    restart: unless-stopped
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      DEBEZIUM_URL: http://debezium:8083
+      DEBEZIUM_CONNECTOR_CONFIG: /app/register-mysql-connector.json
+      DEBEZIUM_CONNECTOR_NAME: vaccination-oltp-connector
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-vaccination_oltp}
+      MYSQL_CDC_USER: ${MYSQL_USER:-oltp_user}
+      MYSQL_CDC_PASSWORD: ${MYSQL_PASSWORD:-oltp_password}
+      DWH_HOST: postgres-dwh
+      DWH_PORT: "5432"
+      DWH_DB: ${POSTGRES_DB:-health_dwh}
+      DWH_USER: ${POSTGRES_USER:-dwh_admin}
+      DWH_PASSWORD: ${POSTGRES_PASSWORD:-dwh_password}
+    volumes:
+      - ./config/debezium/register-mysql-connector.json:/app/register-mysql-connector.json:ro
+    depends_on:
+      mysql-oltp:
+        condition: service_healthy
+      kafka:
+        condition: service_started
+      debezium:
+        condition: service_started
+      dwh-migrate:
+        condition: service_completed_successfully
+    networks:
+      - health_data_network
+
   # ==========================================================================
   # 3. DATA LAKE (LANDING ZONE): MinIO Object Storage
   # Lưu ý: MinIO đã gỡ image minio/minio khỏi Docker Hub từ 2025/2026,
@@ -158,11 +203,30 @@ services:
     volumes:
       - postgres_dwh_data:/var/lib/postgresql/data
       - ./scripts/sql/init-dwh.sql:/docker-entrypoint-initdb.d/init-dwh.sql:ro
+      - ./scripts/sql/upgrade-dwh.sql:/docker-entrypoint-initdb.d/02-upgrade-dwh.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-dwh_admin} -d ${POSTGRES_DB:-health_dwh}"]
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - health_data_network
+
+  dwh-migrate:
+    image: postgres:15-alpine
+    container_name: dwh-migrate
+    environment:
+      PGHOST: postgres-dwh
+      PGPORT: "5432"
+      PGDATABASE: ${POSTGRES_DB:-health_dwh}
+      PGUSER: ${POSTGRES_USER:-dwh_admin}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-dwh_password}
+    volumes:
+      - ./scripts/sql/upgrade-dwh.sql:/migrations/upgrade-dwh.sql:ro
+    command: ["psql", "-v", "ON_ERROR_STOP=1", "-f", "/migrations/upgrade-dwh.sql"]
+    depends_on:
+      postgres-dwh:
+        condition: service_healthy
     networks:
       - health_data_network
 
@@ -248,22 +312,25 @@ services:
     volumes:
       - superset_home:/app/superset_home
       - ./config/superset/superset_config.py:/app/pythonpath/superset_config.py:ro
-    command: >
-      /bin/sh -c "
-      pip install psycopg2-binary &&
-      superset db upgrade &&
-      superset fab create-admin
-        --username $${SUPERSET_ADMIN_USER}
-        --firstname Superset
-        --lastname Admin
-        --email $${SUPERSET_ADMIN_EMAIL}
-        --password $${SUPERSET_ADMIN_PASSWORD} &&
-      superset init &&
-      /usr/bin/run-server.sh
-      "
+    command:
+      - /bin/sh
+      - -c
+      - |
+        pip install psycopg2-binary &&
+        superset db upgrade &&
+        superset fab create-admin \
+          --username "$${SUPERSET_ADMIN_USER}" \
+          --firstname Superset \
+          --lastname Admin \
+          --email "$${SUPERSET_ADMIN_EMAIL}" \
+          --password "$${SUPERSET_ADMIN_PASSWORD}" &&
+        superset init &&
+        /usr/bin/run-server.sh
     depends_on:
       postgres-dwh:
         condition: service_healthy
+      dwh-migrate:
+        condition: service_completed_successfully
     networks:
       - health_data_network
 
@@ -281,4 +348,3 @@ volumes:
   minio_data:
   postgres_dwh_data:
   superset_home:
-

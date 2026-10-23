@@ -5,14 +5,15 @@
     "tasks.max": "1",
     "database.hostname": "mysql-oltp",
     "database.port": "3306",
-    "database.user": "root",
-    "database.password": "root_password",
+    "database.user": "oltp_user",
+    "database.password": "oltp_password",
     "database.server.id": "184054",
     "topic.prefix": "health_cdc",
     "database.include.list": "vaccination_oltp",
+    "snapshot.mode": "when_needed",
+    "table.include.list": "vaccination_oltp.vaccination_centers,vaccination_oltp.vaccination_records",
     "schema.history.internal.kafka.bootstrap.servers": "kafka:9092",
     "schema.history.internal.kafka.topic": "schemahistory.vaccination_oltp",
-    "include.schema.changes": "true"
+    "include.schema.changes": "false"
   }
 }
-

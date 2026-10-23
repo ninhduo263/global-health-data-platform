@@ -106,3 +106,56 @@ SELECT
     CASE WHEN EXTRACT(ISODOW FROM datum) IN (6, 7) THEN TRUE ELSE FALSE END AS is_weekend
 FROM GENERATE_SERIES('2020-01-01'::DATE, '2025-12-31'::DATE, '1 day'::INTERVAL) AS datum
 ON CONFLICT (date_id) DO NOTHING;
+
+-- ============================================================================
+-- 5. VIEW PHÂN TÍCH TỔNG HỢP CHO APACHE SUPERSET (Data Mart)
+-- ============================================================================
+CREATE OR REPLACE VIEW dwh.vw_covid19_analytics AS
+SELECT
+    f.id AS fact_id,
+    c.country_code,
+    c.country_name,
+    r.continent_name,
+    r.who_region,
+    c.population,
+    c.gdp,
+    c.beds_per_1000,
+    c.life_expectancy,
+    d.date_id,
+    d.full_date,
+    d.year,
+    d.month,
+    d.day,
+    d.is_weekend,
+    f.new_cases,
+    f.new_deaths,
+    f.new_tests,
+    f.total_vaccinations,
+    f.internal_vax_doses,
+    f.internal_patients_declared,
+    -- 1. Tỷ lệ tử vong thô CFR (Case Fatality Rate %)
+    ROUND(CASE WHEN f.new_cases > 0 THEN (f.new_deaths::numeric / f.new_cases::numeric) * 100.0 ELSE 0.0 END, 2) AS case_fatality_rate_pct,
+    -- 2. Tỷ lệ ca nhiễm trên 100.000 dân
+    ROUND(CASE WHEN c.population > 0 THEN (f.new_cases::numeric / c.population::numeric) * 100000.0 ELSE 0.0 END, 2) AS cases_per_100k_pop,
+    -- 3. Tỷ lệ tử vong trên 100.000 dân
+    ROUND(CASE WHEN c.population > 0 THEN (f.new_deaths::numeric / c.population::numeric) * 100000.0 ELSE 0.0 END, 2) AS deaths_per_100k_pop,
+    -- 4. Tỷ lệ bao phủ vắc-xin (% dân số)
+    ROUND(CASE WHEN c.population > 0 THEN (f.total_vaccinations::numeric / c.population::numeric) * 100.0 ELSE 0.0 END, 2) AS vaccination_coverage_pct,
+    -- 5. Trung bình trượt 7 ngày ca nhiễm mới (7-Day Moving Average)
+    ROUND(AVG(f.new_cases) OVER (
+        PARTITION BY f.country_id
+        ORDER BY d.full_date
+        ROWS BETWEEN 6 PRECEDING AND CURRENT ROW
+    )::numeric, 1) AS new_cases_7d_avg,
+    -- 6. Trung bình trượt 7 ngày ca tử vong mới (7-Day Moving Average)
+    ROUND(AVG(f.new_deaths) OVER (
+        PARTITION BY f.country_id
+        ORDER BY d.full_date
+        ROWS BETWEEN 6 PRECEDING AND CURRENT ROW
+    )::numeric, 1) AS new_deaths_7d_avg,
+    -- 7. Tỷ lệ xét nghiệm dương tính (Positivity Rate %)
+    ROUND(CASE WHEN f.new_tests > 0 THEN (f.new_cases::numeric / f.new_tests::numeric) * 100.0 ELSE 0.0 END, 2) AS test_positivity_rate_pct
+FROM dwh.fact_cases f
+JOIN dwh.dim_country c ON f.country_id = c.id
+JOIN dwh.dim_date d ON f.date_id = d.date_id
+LEFT JOIN dwh.dim_region r ON c.region_id = r.id;

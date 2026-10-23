@@ -1,19 +1,10 @@
-"""
-Airflow DAG: health_data_pipeline.py
-Mô tả: Pipeline tích hợp đa nguồn (100% Live Data - KHÔNG hardcode dữ liệu):
-  - Nguồn 1 (Live API - Chuỗi thời gian): Gọi trực tiếp Our World in Data Live Catalog API & Disease.sh COVID-19 API
-    để lấy dữ liệu thực tế hàng ngày về ca nhiễm (new_cases), tử vong (new_deaths), xét nghiệm (new_tests), tiêm chủng (total_vaccinations).
-  - Nguồn 2 (Live WHO GHO API -> File CSV): Gọi trực tiếp WHO Global Health Observatory OData API (ghoapi.azureedge.net)
-    kết hợp chỉ số hạ tầng y tế (số giường bệnh, tuổi thọ, dân số, GDP) xuất ra file CSV chuẩn.
-  - Nguồn 3 (Relational DB - MySQL OLTP): Truy vấn trực tiếp bảng patients & vaccination_records từ MySQL OLTP.
-Luồng xử lý: [extract_owid_api, extract_who_csv, extract_mysql_oltp] >> load_to_minio >> transform_and_load_to_dwh
-"""
+"""Load the selected WHO COVID-19 daily dataset into the health DWH."""
 
 import csv
 import logging
 import math
 import os
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from airflow import DAG
@@ -28,50 +19,37 @@ OWID_API_URL = os.getenv(
     "OWID_API_URL",
     "https://raw.githubusercontent.com/owid/covid-19-data/master/public/data/owid-covid-data.csv",
 )
-OWID_LIVE_CSV_URL = os.getenv(
-    "OWID_LIVE_CSV_URL",
-    "https://catalog.ourworldindata.org/garden/covid/latest/compact/compact.csv",
-)
-DISEASE_SH_API_URL = os.getenv(
-    "DISEASE_SH_API_URL",
-    "https://disease.sh/v3/covid-19/countries",
-)
-
-# Nguồn 2: Live WHO Global Health Observatory (GHO) OData API
-WHO_GHO_COUNTRY_API = "https://ghoapi.azureedge.net/api/DIMENSION/COUNTRY/DimensionValues"
-WHO_GHO_BEDS_API = "https://ghoapi.azureedge.net/api/WHS6_102"  # Hospital beds (per 10,000 population)
-
-# Danh sách mã ISO-3 các quốc gia mục tiêu cần thu thập & phân tích
-TARGET_COUNTRIES = ["VNM", "USA", "DEU", "JPN", "KOR", "GBR", "FRA", "BRA", "IND", "SGP"]
-# Khoảng thời gian thu thập chuỗi thời gian thực tế (giai đoạn cao điểm có đầy đủ xét nghiệm, tiêm chủng, ca bệnh)
-START_DATE_FILTER = os.getenv("START_DATE_FILTER", "2021-08-01")
-END_DATE_FILTER = os.getenv("END_DATE_FILTER", "2021-09-30")
-
-WHO_CSV_OUTPUT_PATH = os.getenv(
+WHO_CSV_SOURCE_PATH = os.getenv(
     "WHO_CSV_SOURCE_PATH",
-    "/opt/airflow/data/raw/who_covid_sample.csv",
+    "/opt/airflow/data/raw/WHO-COVID-19-global-daily-data.csv",
+)
+WHO_START_DATE = date.fromisoformat(os.getenv("WHO_START_DATE", "2020-01-01"))
+WHO_END_DATE = date.fromisoformat(os.getenv("WHO_END_DATE", "2023-12-31"))
+WHO_COUNTRY_CODES = tuple(
+    code.strip().upper()
+    for code in os.getenv(
+        "WHO_COUNTRY_CODES",
+        "VN,US,GB,DE,FR,IT,ES,IN,CN,JP,KR,BR,RU,AU,CA",
+    ).split(",")
+    if code.strip()
 )
 STAGING_DIR = Path("/tmp/health_pipeline_staging")
 
-# Cấu hình MinIO (Data Lake - Landing Zone)
 MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", "http://minio:9000")
 MINIO_ACCESS_KEY = os.getenv("MINIO_ROOT_USER", "minioadmin")
 MINIO_SECRET_KEY = os.getenv("MINIO_ROOT_PASSWORD", "minioadmin123")
 MINIO_BUCKET = os.getenv("MINIO_BUCKET_NAME", "covid19-landing-zone")
 
-# Cấu hình MySQL (Nguồn 3 - OLTP Vận hành nội bộ)
-OLTP_HOST = os.getenv("OLTP_HOST", "mysql-oltp")
-OLTP_PORT = int(os.getenv("OLTP_PORT", "3306"))
-OLTP_DB = os.getenv("OLTP_DB", "vaccination_oltp")
-OLTP_USER = os.getenv("OLTP_USER", "oltp_user")
-OLTP_PASSWORD = os.getenv("OLTP_PASSWORD", "oltp_password")
-
-# Cấu hình PostgreSQL (Data Warehouse - Snowflake Schema)
 DWH_HOST = os.getenv("DWH_HOST", "postgres-dwh")
 DWH_PORT = int(os.getenv("DWH_PORT", "5432"))
 DWH_DB = os.getenv("DWH_DB", "health_dwh")
 DWH_USER = os.getenv("DWH_USER", "dwh_admin")
 DWH_PASSWORD = os.getenv("DWH_PASSWORD", "dwh_password")
+OLTP_HOST = os.getenv("OLTP_HOST", "mysql-oltp")
+OLTP_PORT = int(os.getenv("OLTP_PORT", "3306"))
+OLTP_DB = os.getenv("OLTP_DB", "vaccination_oltp")
+OLTP_USER = os.getenv("OLTP_USER", "oltp_user")
+OLTP_PASSWORD = os.getenv("OLTP_PASSWORD", "oltp_password")
 
 # ============================================================================
 # CÁC HÀM XỬ LÝ CHO TỪNG TASK (100% LIVE API & DATABASE QUERIES)
@@ -134,138 +112,47 @@ def extract_owid_api_callable(**context) -> str:
     logger.info("Đã tải dữ liệu OWID CSV toàn cầu tại: %s", output_file)
     return str(output_file)
 
-
 def extract_who_csv_callable(**context) -> str:
-    """
-    Task 2 (Nguồn 2 - File CSV Hạ tầng Y tế từ Live WHO Global Health Observatory API):
-    Gọi trực tiếp WHO GHO OData API (ghoapi.azureedge.net) để lấy phân vùng WHO (who_region)
-    và số giường bệnh (WHS6_102), kết hợp cùng chỉ số nhân khẩu học (population, gdp,
-    beds_per_1000, life_expectancy) từ bộ dữ liệu quốc tế, sau đó xuất ra file CSV chuẩn.
-    """
-    import pandas as pd
-    import requests
-
+    """Filter the WHO file by the configured period and 15 country codes."""
     execution_date = context["ds_nodash"]
     STAGING_DIR.mkdir(parents=True, exist_ok=True)
-    target_csv = STAGING_DIR / f"who_health_infrastructure_{execution_date}.csv"
-
-    logger.info("Đang gọi trực tiếp WHO Global Health Observatory API: %s", WHO_GHO_COUNTRY_API)
-
-    # 1. Lấy danh mục Quốc gia & Khu vực WHO (WHO Region) trực tiếp từ WHO GHO API
-    resp_countries = requests.get(WHO_GHO_COUNTRY_API, timeout=30)
-    resp_countries.raise_for_status()
-    who_country_meta = {
-        item["Code"]: {
-            "who_country_title": item.get("Title"),
-            "who_region": item.get("ParentCode", "UNK"),
-            "who_region_name": item.get("ParentTitle", "Unknown"),
-        }
-        for item in resp_countries.json().get("value", [])
-        if item.get("Code") in TARGET_COUNTRIES
+    target_csv = STAGING_DIR / f"who_covid_{execution_date}.csv"
+    required = {
+        "Date_reported",
+        "Country_code",
+        "Country",
+        "WHO_region",
+        "New_cases",
+        "Cumulative_cases",
+        "New_deaths",
+        "Cumulative_deaths",
     }
-
-    # 2. Lấy chỉ số Giường bệnh (WHS6_102: Hospital beds per 10,000 population) trực tiếp từ WHO GHO API
-    filter_expr = " or ".join([f"SpatialDim eq '{c}'" for c in TARGET_COUNTRIES])
-    resp_beds = requests.get(
-        WHO_GHO_BEDS_API,
-        params={"$filter": filter_expr},
-        timeout=30,
-    )
-    who_beds_per_1000 = {}
-    if resp_beds.ok:
-        # Lấy giá trị năm gần nhất của từng quốc gia từ WHO GHO API (chia 10 để đổi từ per 10,000 sang per 1,000)
-        beds_rows = sorted(
-            resp_beds.json().get("value", []),
-            key=lambda x: x.get("TimeDim", 0),
-        )
-        for row in beds_rows:
-            code = row.get("SpatialDim")
-            num_val = row.get("NumericValue")
-            if code and num_val is not None:
-                who_beds_per_1000[code] = round(float(num_val) / 10.0, 3)
-
-    # 3. Trích xuất các chỉ số Dân số, GDP, Tuổi thọ, Châu lục mới nhất từ Live Catalog
-    infra_cols = [
-        "code",
-        "country",
-        "continent",
-        "population",
-        "gdp_per_capita",
-        "hospital_beds_per_thousand",
-        "life_expectancy",
-    ]
-    df_infra = pd.read_csv(OWID_LIVE_CSV_URL, usecols=infra_cols)
-    df_infra = (
-        df_infra[df_infra["code"].isin(TARGET_COUNTRIES)]
-        .drop_duplicates(subset=["code"], keep="last")
-        .copy()
-    )
-
-    continent_code_map = {
-        "Asia": "AS",
-        "Europe": "EU",
-        "North America": "NA",
-        "South America": "SA",
-        "Africa": "AF",
-        "Oceania": "OC",
-    }
-
-    csv_rows = []
-    for _, row in df_infra.iterrows():
-        code = row["code"]
-        continent_name = str(row["continent"]) if pd.notna(row["continent"]) else "Unknown"
-        continent_code = continent_code_map.get(continent_name, "UN")
-        who_meta = who_country_meta.get(code, {})
-
-        population = int(row["population"]) if pd.notna(row["population"]) else 0
-        gdp_per_capita = float(row["gdp_per_capita"]) if pd.notna(row["gdp_per_capita"]) else 0.0
-        # Ưu tiên số giường bệnh từ WHO GHO API (WHS6_102), nếu thiếu thì lấy từ catalog
-        beds = who_beds_per_1000.get(
-            code,
-            round(float(row["hospital_beds_per_thousand"]), 3)
-            if pd.notna(row["hospital_beds_per_thousand"])
-            else 0.0,
-        )
-        life_exp = round(float(row["life_expectancy"]), 2) if pd.notna(row["life_expectancy"]) else 0.0
-
-        csv_rows.append(
-            {
-                "country_code": code,
-                "country_name": who_meta.get("who_country_title") or row["country"],
-                "continent_code": continent_code,
-                "continent_name": continent_name,
-                "who_region": who_meta.get("who_region", "UNK"),
-                "population": population,
-                "gdp": round(gdp_per_capita, 2),
-                "beds_per_1000": beds,
-                "life_expectancy": life_exp,
-            }
-        )
-
-    fieldnames = [
-        "country_code",
-        "country_name",
-        "continent_code",
-        "continent_name",
-        "who_region",
-        "population",
-        "gdp",
-        "beds_per_1000",
-        "life_expectancy",
-    ]
-
-    # Ghi ra file staging và cập nhật luôn file CSV trong thư mục data/raw
-    for path in [target_csv, Path(WHO_CSV_OUTPUT_PATH)]:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, mode="w", encoding="utf-8", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
+    selected_rows = 0
+    with open(WHO_CSV_SOURCE_PATH, encoding="utf-8-sig", newline="") as source:
+        reader = csv.DictReader(source)
+        missing = required - set(reader.fieldnames or [])
+        if missing:
+            raise ValueError(f"WHO dataset thiếu cột: {sorted(missing)}")
+        with open(target_csv, "w", encoding="utf-8", newline="") as output:
+            writer = csv.DictWriter(output, fieldnames=sorted(required))
             writer.writeheader()
-            writer.writerows(csv_rows)
-
+            for row in reader:
+                code = (row["Country_code"] or "").strip().upper()
+                report_date = date.fromisoformat(row["Date_reported"])
+                if (
+                    code in WHO_COUNTRY_CODES
+                    and WHO_START_DATE <= report_date <= WHO_END_DATE
+                ):
+                    writer.writerow(row)
+                    selected_rows += 1
+    if not selected_rows:
+        raise ValueError("Không có dòng nào khớp bộ lọc WHO")
     logger.info(
-        "Đã tải dữ liệu thực tế từ WHO GHO API cho %d quốc gia và lưu CSV tại: %s",
-        len(csv_rows),
-        target_csv,
+        "Filtered %d WHO rows for %d countries from %s to %s",
+        selected_rows,
+        len(WHO_COUNTRY_CODES),
+        WHO_START_DATE,
+        WHO_END_DATE,
     )
     return str(target_csv)
 
@@ -331,11 +218,9 @@ def load_to_minio_callable(**context) -> dict:
 
     ti = context["ti"]
     execution_date = context["ds"]
-
     owid_csv_path = ti.xcom_pull(task_ids="extract_owid_api")
     who_csv_path = ti.xcom_pull(task_ids="extract_who_csv")
     mysql_oltp_paths = ti.xcom_pull(task_ids="extract_mysql_oltp")
-
     s3_client = boto3.client(
         "s3",
         endpoint_url=MINIO_ENDPOINT,
@@ -344,12 +229,10 @@ def load_to_minio_callable(**context) -> dict:
         config=Config(signature_version="s3v4"),
         region_name="us-east-1",
     )
-
     try:
         s3_client.head_bucket(Bucket=MINIO_BUCKET)
     except ClientError:
         s3_client.create_bucket(Bucket=MINIO_BUCKET)
-
     # Phân vùng thư mục trên Data Lake theo ngày (Partitioning by date)
     owid_s3_key = f"raw/owid/{execution_date}/owid_covid.csv"
     who_s3_key = f"raw/who/{execution_date}/who_covid.csv"
@@ -377,8 +260,7 @@ def load_to_minio_callable(**context) -> dict:
 
 def transform_and_load_to_dwh_callable(**context) -> None:
     """
-    Task 5: Đọc trực tiếp cả 3 file từ MinIO Data Lake (s3://covid19-landing-zone/...),
-    chuẩn hóa và nạp (Upsert) vào Snowflake Schema trên PostgreSQL DWH.
+    Load OWID cases and the selected WHO dataset from MinIO into separate DWH facts.
     """
     import boto3
     import csv
@@ -406,7 +288,6 @@ def transform_and_load_to_dwh_callable(**context) -> None:
     who_csv_path = STAGING_DIR / f"who_from_minio_{snapshot_date}.csv"
     s3_client.download_file(minio_meta["bucket"], minio_meta["owid_key"], str(owid_csv_path))
     s3_client.download_file(minio_meta["bucket"], minio_meta["who_key"], str(who_csv_path))
-
     continent_codes = {
         "Africa": "AF",
         "Asia": "AS",
@@ -425,6 +306,13 @@ def transform_and_load_to_dwh_callable(**context) -> None:
         if not math.isfinite(number) or number < 0:
             return 0
         return int(number)
+
+    def signed_integer_value(value: str) -> int:
+        try:
+            number = float(value)
+        except (TypeError, ValueError, OverflowError):
+            return 0
+        return int(number) if math.isfinite(number) else 0
 
     def nullable_integer(value: str):
         try:
@@ -447,14 +335,11 @@ def transform_and_load_to_dwh_callable(**context) -> None:
         user=DWH_USER,
         password=DWH_PASSWORD,
     )
-
     try:
         with conn.cursor() as cur:
-            cur.execute("ALTER TABLE dwh.dim_country ADD COLUMN IF NOT EXISTS life_expectancy NUMERIC(5,2);")
-            cur.execute("ALTER TABLE dwh.fact_cases ADD COLUMN IF NOT EXISTS new_tests INT DEFAULT 0;")
-            cur.execute("ALTER TABLE dwh.fact_cases ADD COLUMN IF NOT EXISTS internal_vax_doses INT DEFAULT 0;")
-            cur.execute("ALTER TABLE dwh.fact_cases ADD COLUMN IF NOT EXISTS internal_patients_declared INT DEFAULT 0;")
-
+            cur.execute("DELETE FROM dwh.fact_who_covid_daily")
+            cur.execute("DELETE FROM dwh.fact_cases")
+            cur.execute("DELETE FROM dwh.dim_country")
             cur.execute(
                 """
                 ALTER TABLE dwh.fact_cases
@@ -495,67 +380,57 @@ def transform_and_load_to_dwh_callable(**context) -> None:
             cur.execute(
                 """
                 INSERT INTO dwh.dim_indicator (indicator_code, description)
-                VALUES (
-                    'LIVE_MULTI_SOURCE_COVID19',
-                    'Dữ liệu thực tế từ Live OWID/Disease.sh API + Live WHO GHO API + MySQL OLTP'
-                )
-                ON CONFLICT (indicator_code) DO UPDATE SET description = EXCLUDED.description
-                RETURNING id;
-                """
+                VALUES (%s, %s)
+                ON CONFLICT (indicator_code) DO UPDATE
+                    SET description = EXCLUDED.description
+                RETURNING id
+                """,
+                (
+                    "OWID_COVID_DAILY_GLOBAL",
+                    "Global country-level COVID-19 observations from OWID",
+                ),
             )
             indicator_id = cur.fetchone()[0]
 
+            who_rows = []
             with open(who_csv_path, mode="r", encoding="utf-8-sig", newline="") as source:
                 for row in csv.DictReader(source):
-                    country_code = (row.get("country_code") or "").strip()
-                    continent_code = (row.get("continent_code") or "").strip()
-                    continent_name = (row.get("continent_name") or "").strip()
-                    if not country_code or not continent_code or not continent_name:
+                    country_code = (row.get("Country_code") or "").strip().upper()
+                    if len(country_code) != 2:
                         continue
-
-                    cur.execute(
-                        """
-                        INSERT INTO dwh.dim_region (continent_code, continent_name, who_region)
-                        VALUES (%s, %s, %s)
-                        ON CONFLICT (continent_code) DO UPDATE SET
-                            continent_name = EXCLUDED.continent_name,
-                            who_region = EXCLUDED.who_region
-                        RETURNING id;
-                        """,
-                        (continent_code, continent_name, row.get("who_region") or "UNK"),
-                    )
-                    region_id = cur.fetchone()[0]
-                    cur.execute(
-                        """
-                        INSERT INTO dwh.dim_country (
-                            country_code, country_name, population, gdp,
-                            beds_per_1000, life_expectancy, region_id
-                        )
-                        VALUES (%s, %s, %s, %s, %s, %s, %s)
-                        ON CONFLICT (country_code) DO UPDATE SET
-                            country_name = EXCLUDED.country_name,
-                            population = COALESCE(EXCLUDED.population, dwh.dim_country.population),
-                            gdp = COALESCE(EXCLUDED.gdp, dwh.dim_country.gdp),
-                            beds_per_1000 = COALESCE(
-                                EXCLUDED.beds_per_1000, dwh.dim_country.beds_per_1000
-                            ),
-                            life_expectancy = COALESCE(
-                                EXCLUDED.life_expectancy, dwh.dim_country.life_expectancy
-                            ),
-                            region_id = EXCLUDED.region_id,
-                            updated_at = CURRENT_TIMESTAMP
-                        RETURNING id;
-                        """,
+                    who_rows.append(
                         (
+                            date.fromisoformat(row["Date_reported"]),
                             country_code,
-                            row.get("country_name") or country_code,
-                            nullable_integer(row.get("population")),
-                            nullable_float(row.get("gdp")),
-                            nullable_float(row.get("beds_per_1000")),
-                            nullable_float(row.get("life_expectancy")),
-                            region_id,
-                        ),
+                            row["Country"],
+                            row["WHO_region"],
+                            signed_integer_value(row.get("New_cases")),
+                            integer_value(row.get("Cumulative_cases")),
+                            signed_integer_value(row.get("New_deaths")),
+                            integer_value(row.get("Cumulative_deaths")),
+                        )
                     )
+            if who_rows:
+                execute_values(
+                    cur,
+                    """
+                    INSERT INTO dwh.fact_who_covid_daily (
+                        report_date, country_code, country_name, who_region,
+                        new_cases, cumulative_cases, new_deaths, cumulative_deaths
+                    ) VALUES %s
+                    ON CONFLICT (report_date, country_code) DO UPDATE SET
+                        country_name = EXCLUDED.country_name,
+                        who_region = EXCLUDED.who_region,
+                        new_cases = EXCLUDED.new_cases,
+                        cumulative_cases = EXCLUDED.cumulative_cases,
+                        new_deaths = EXCLUDED.new_deaths,
+                        cumulative_deaths = EXCLUDED.cumulative_deaths,
+                        updated_at = CURRENT_TIMESTAMP
+                    """,
+                    who_rows,
+                    page_size=1000,
+                )
+                logger.info("Loaded %s WHO observations into the separate WHO fact", len(who_rows))
 
             country_ids = {}
             region_ids = {}
@@ -701,9 +576,9 @@ def transform_and_load_to_dwh_callable(**context) -> None:
             len(country_ids),
             len(date_ids),
         )
-    except Exception as exc:
+    except Exception:
         conn.rollback()
-        logger.error("Lỗi khi nạp dữ liệu vào DWH: %s", exc)
+        logger.exception("DWH data load failed")
         raise
     finally:
         conn.close()
@@ -836,7 +711,6 @@ def cluster_weekly_covid_callable(**context) -> None:
 # ============================================================================
 # KHỞI TẠO ĐỐI TƯỢNG DAG
 # ============================================================================
-
 default_args = {
     "owner": "data_engineering_team",
     "depends_on_past": False,
@@ -850,14 +724,14 @@ with DAG(
     dag_id="health_data_pipeline",
     default_args=default_args,
     description=(
-        "Nạp lịch sử COVID-19 toàn cầu theo quốc gia/ngày từ OWID cùng dữ liệu WHO "
-        "vào MinIO và PostgreSQL DWH."
+        "Load OWID COVID-19 history into the DWH, retain selected WHO source data "
+        "in MinIO, and cluster weekly country trends."
     ),
     schedule_interval="@daily",
     start_date=datetime(2024, 1, 1),
     catchup=False,
     max_active_runs=1,
-    tags=["public_health", "live_api", "owid", "who_gho", "mysql_oltp", "minio", "snowflake_dwh"],
+    tags=["public_health", "who", "owid", "kmeans", "snowflake_dwh"],
 ) as dag:
 
     # Task 1: Tải snapshot CSV COVID-19 toàn cầu từ Our World in Data
@@ -870,7 +744,7 @@ with DAG(
     extract_who_csv = PythonOperator(
         task_id="extract_who_csv",
         python_callable=extract_who_csv_callable,
-        doc_md="Nguồn 2 (Live WHO GHO API): Gọi trực tiếp ghoapi.azureedge.net lấy chỉ số giường bệnh & phân vùng WHO xuất ra CSV.",
+        doc_md="Lọc bộ WHO theo quốc gia và ngày cấu hình rồi lưu raw vào MinIO.",
     )
 
     extract_mysql_oltp = PythonOperator(
@@ -884,7 +758,6 @@ with DAG(
         python_callable=load_to_minio_callable,
         doc_md="Upload các file CSV thô lên bucket `covid19-landing-zone` trong MinIO.",
     )
-
     transform_and_load_to_dwh = PythonOperator(
         task_id="transform_and_load_to_dwh",
         python_callable=transform_and_load_to_dwh_callable,

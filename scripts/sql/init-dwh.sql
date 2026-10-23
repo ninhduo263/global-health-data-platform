@@ -77,8 +77,8 @@ CREATE TABLE IF NOT EXISTS dwh.fact_cases (
     country_id INT NOT NULL REFERENCES dwh.dim_country(id) ON DELETE RESTRICT,
     date_id INT NOT NULL REFERENCES dwh.dim_date(date_id) ON DELETE RESTRICT,
     indicator_id INT REFERENCES dwh.dim_indicator(id) ON DELETE SET NULL,
-    new_cases INT DEFAULT 0 CHECK (new_cases >= 0),                      -- Nguồn 1 (OWID API)
-    new_deaths INT DEFAULT 0 CHECK (new_deaths >= 0),                    -- Nguồn 1 (OWID API)
+    new_cases INT DEFAULT 0,                                             -- WHO corrections may be negative
+    new_deaths INT DEFAULT 0,                                            -- WHO corrections may be negative
     new_tests INT DEFAULT 0 CHECK (new_tests >= 0),                      -- Nguồn 1 (OWID API)
     total_vaccinations BIGINT DEFAULT 0 CHECK (total_vaccinations >= 0), -- Nguồn 1 + Nguồn 3
     internal_vax_doses INT DEFAULT 0 CHECK (internal_vax_doses >= 0),    -- Nguồn 3 (MySQL OLTP)

@@ -25,16 +25,25 @@ docker compose ps
 ```
 
 Compose tự chạy migration DWH, đăng ký Debezium connector và bật CDC consumer. Lần chạy đầu có thể mất vài phút để tải image và khởi tạo Airflow/Superset.
+Pipeline WHO đọc `data/raw/WHO-COVID-19-global-daily-data.csv`, lọc 15 mã
+`VN,US,GB,DE,FR,IT,ES,IN,CN,JP,KR,BR,RU,AU,CA` trong giai đoạn
+`2020-01-01` đến `2023-12-31`. Mã Việt Nam trong file WHO là `VN` (ISO-2);
+OWID và CDC dùng `VNM` (ISO-3). WHO và OWID được giữ ở các fact/view riêng, không join trực tiếp bằng mã quốc gia.
 
 ## 3. Các luồng dữ liệu
 
-- DAG `health_data_pipeline` tải snapshot CSV lịch sử toàn cầu từ Our World in Data (OWID), đồng thời trích CSV WHO và hai bảng `vaccination_centers` / `vaccination_records` từ MySQL. Các file thô được lưu vào MinIO; dữ liệu OWID ở cấp quốc gia/ngày được upsert vào `dwh.fact_cases`.
+- DAG `health_data_pipeline` tải snapshot OWID để nạp dữ liệu COVID-19 ISO-3 theo quốc gia/ngày vào `dwh.fact_cases`; đồng thời lọc WHO theo danh sách quốc gia và giai đoạn cấu hình, lưu raw lên MinIO rồi nạp số liệu WHO ISO-2 vào `dwh.fact_who_covid_daily`. Hai bảng `vaccination_centers` / `vaccination_records` của MySQL cũng được lưu raw vào MinIO.
 - Nguồn OWID gồm các quốc gia và vùng lãnh thổ có mã quốc gia 3 ký tự, với các trường hợp mắc/tử vong mới, tổng lũy kế và số liệu tiêm chủng. Dữ liệu lịch sử có sẵn từ năm 2020; ngày cuối cùng phụ thuộc snapshot OWID hiện hành (không phải luồng thời gian thực).
 - Debezium phát CDC cho hai bảng MySQL vào Kafka. Connector sử dụng tài khoản replication `oltp_user` (không dùng root); quyền replication được cấp trong `scripts/sql/init-oltp.sql`. Service `cdc-consumer` tự đăng ký/cập nhật connector; connector dùng `snapshot.mode=when_needed` để chụp snapshot ban đầu hoặc chụp lại khi binlog/offset cũ không còn khả dụng (ví dụ sau khi MySQL được tạo lại), rồi tiếp tục theo dõi thay đổi. Consumer upsert/xóa dữ liệu trong `dwh.dim_vaccination_center` và `dwh.fact_vaccination`. Giao dịch được xử lý idempotent; Kafka offset chỉ được commit sau khi transaction DWH thành công.
 - Migration `scripts/sql/upgrade-dwh.sql` chạy an toàn nhiều lần và tạo các bảng CDC cùng view phục vụ BI. View cũng được tạo mới khi PostgreSQL khởi tạo volume lần đầu.
 - MySQL dùng cổng host `3307` vì host đã có dịch vụ chiếm `3306`; các container vẫn kết nối nội bộ qua cổng `3306`.
 
 ## 4. Tạo dashboard Superset
+
+Compose tự động tạo database connection **Health DWH** trong Superset với PostgreSQL DWH
+(`postgres-dwh:5432/health_dwh`). Vào **Data → Databases → Health DWH → Explore** để
+kiểm tra các bảng/view trong schema `dwh`. Nếu connection đã tồn tại từ lần chạy trước,
+Compose sẽ cập nhật lại URI để tránh trỏ nhầm `localhost` hoặc database SQLite metadata.
 
 Kết nối database trong Superset bằng PostgreSQL:
 
@@ -48,10 +57,12 @@ Kết nối database trong Superset bằng PostgreSQL:
 Trong Superset, vào **Data → Datasets → + Dataset**, chọn database trên, schema `dwh`, rồi thêm các view:
 
 - `vw_dashboard_cases` — dữ liệu ca mắc/tử vong và tiêm chủng OWID theo ngày, quốc gia, khu vực.
+- `vw_who_covid_daily` — dữ liệu WHO theo ngày, mã ISO-2 và WHO region.
 - `vw_dashboard_vaccinations` — số lượt tiêm theo ngày, trung tâm, vaccine và số mũi.
-- `vw_weekly_covid_clusters` — kết quả K-means theo quốc gia/tuần; `cluster_id` được sắp theo mức ca mắc trung bình trên 100.000 dân trong lần chạy đó.
+- `vw_weekly_covid_clusters` — kết quả K-means theo quốc gia/tuần.
 
-Task `weekly_covid_kmeans` chạy sau khi OWID được nạp vào DWH. Task tổng hợp ca mắc/tử vong theo tuần, chuẩn hóa số ca theo dân số và phân cụm trên incidence, mortality và biến động ca so với tuần trước. Mặc định có 4 cụm; có thể đổi bằng biến môi trường `COVID_KMEANS_CLUSTERS`. Kết quả được upsert vào `dwh.fact_weekly_covid_cluster`, nên chạy lại DAG không tạo hàng trùng. Đây là phân cụm xu hướng, không phải dự báo hoặc cảnh báo dịch tự động.
+Task `weekly_covid_kmeans` chạy sau khi OWID được nạp vào DWH. Task tổng hợp ca mắc/tử vong theo tuần, chuẩn hóa theo dân số, rồi phân cụm theo incidence, mortality và biến động ca so với tuần trước. Mặc định có 4 cụm, cấu hình qua `COVID_KMEANS_CLUSTERS`; kết quả upsert vào `dwh.fact_weekly_covid_cluster`. `cluster_id` được sắp theo mức ca mắc trung bình trên 100.000 dân trong lần chạy. Đây là phân cụm xu hướng, không phải dự báo/cảnh báo tự động.
+
 
 Nếu database volume đã tồn tại trước khi thêm bảng phân cụm, chạy lại migration và khởi động lại Airflow để cài dependency mới:
 
@@ -66,6 +77,8 @@ docker compose up -d --force-recreate airflow-webserver airflow-scheduler
 1. **Số quốc gia theo cụm và tuần:** Bar Chart, X-axis `cluster_id`, metric `COUNT_DISTINCT(country_code)`, time column `week_start`.
 2. **Incidence theo tuần:** Time-series Line Chart, X-axis `week_start`, metric `AVG(cases_per_100k)`, dimension `cluster_id`.
 3. **Chi tiết quốc gia:** Table với `week_start`, `country_code`, `country_name`, `cluster_id`, `cases_per_100k`, `deaths_per_100k`, `case_growth_pct`.
+
+Với dataset `vw_who_covid_daily`, có thể tạo line chart ca mắc mới theo ngày (X-axis `report_date`, metric `SUM(new_cases)`, dimension `who_region`) và chart tử vong mới tương tự với `SUM(new_deaths)`. WHO dùng ISO-2, nên không join trực tiếp `country_code` của view này với mã ISO-3 trong `vw_dashboard_cases`.
 
 Sau lần nạp OWID, mở dataset `vw_dashboard_cases` trong Superset và đồng bộ/refresh danh sách cột để nhận các trường mới (`new_vaccinations`, `people_fully_vaccinated`, `total_cases`, `total_deaths`). Hai chart tiêm chủng đang có trong dashboard tạo từ CDC MySQL vẫn chỉ là dữ liệu mẫu nội bộ; muốn dashboard cũng thể hiện quy mô toàn cầu thì sửa dataset của chúng sang `vw_dashboard_cases`:
 
@@ -91,4 +104,4 @@ docker compose logs --tail 50 cdc-consumer
 curl.exe http://localhost:8083/connectors/vaccination-oltp-connector/status
 ```
 
-CDC consumer không đưa `citizen_hash` vào DWH; dashboard chỉ chứa số liệu tổng hợp. DAG extraction chỉ lưu dữ liệu MySQL thô vào bucket MinIO, không thay thế luồng CDC.
+CDC consumer không đưa `citizen_hash` vào DWH; dashboard chỉ chứa số liệu tổng hợp. DAG lưu bản raw MySQL vào MinIO, không thay thế luồng CDC.

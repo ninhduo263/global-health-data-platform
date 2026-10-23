@@ -26,6 +26,10 @@ CREATE INDEX IF NOT EXISTS idx_fact_vaccination_vaccine_type
     ON dwh.fact_vaccination(vaccine_type);
 
 ALTER TABLE dwh.fact_cases
+    DROP CONSTRAINT IF EXISTS fact_cases_new_cases_check,
+    DROP CONSTRAINT IF EXISTS fact_cases_new_deaths_check;
+
+ALTER TABLE dwh.fact_cases
     ADD COLUMN IF NOT EXISTS new_vaccinations BIGINT NOT NULL DEFAULT 0
         CHECK (new_vaccinations >= 0),
     ADD COLUMN IF NOT EXISTS people_vaccinated BIGINT NOT NULL DEFAULT 0
@@ -37,7 +41,8 @@ ALTER TABLE dwh.fact_cases
     ADD COLUMN IF NOT EXISTS total_deaths BIGINT NOT NULL DEFAULT 0
         CHECK (total_deaths >= 0);
 
-CREATE OR REPLACE VIEW dwh.vw_dashboard_cases AS
+DROP VIEW IF EXISTS dwh.vw_dashboard_cases;
+CREATE VIEW dwh.vw_dashboard_cases AS
 SELECT
     d.full_date AS report_date,
     d.year,
@@ -45,6 +50,7 @@ SELECT
     c.country_code,
     c.country_name,
     r.continent_name,
+    r.continent_code AS who_region,
     f.new_cases,
     f.new_deaths,
     f.total_vaccinations,
@@ -57,6 +63,34 @@ FROM dwh.fact_cases AS f
 JOIN dwh.dim_country AS c ON c.id = f.country_id
 JOIN dwh.dim_date AS d ON d.date_id = f.date_id
 LEFT JOIN dwh.dim_region AS r ON r.id = c.region_id;
+
+CREATE TABLE IF NOT EXISTS dwh.fact_who_covid_daily (
+    report_date DATE NOT NULL,
+    country_code CHAR(2) NOT NULL,
+    country_name VARCHAR(150) NOT NULL,
+    who_region VARCHAR(10) NOT NULL,
+    new_cases BIGINT NOT NULL DEFAULT 0,
+    cumulative_cases BIGINT NOT NULL DEFAULT 0 CHECK (cumulative_cases >= 0),
+    new_deaths BIGINT NOT NULL DEFAULT 0,
+    cumulative_deaths BIGINT NOT NULL DEFAULT 0 CHECK (cumulative_deaths >= 0),
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (report_date, country_code)
+);
+
+CREATE INDEX IF NOT EXISTS idx_fact_who_covid_daily_region_date
+    ON dwh.fact_who_covid_daily(who_region, report_date);
+
+CREATE OR REPLACE VIEW dwh.vw_who_covid_daily AS
+SELECT
+    report_date,
+    country_code,
+    country_name,
+    who_region,
+    new_cases,
+    cumulative_cases,
+    new_deaths,
+    cumulative_deaths
+FROM dwh.fact_who_covid_daily;
 
 CREATE OR REPLACE VIEW dwh.vw_dashboard_vaccinations AS
 SELECT

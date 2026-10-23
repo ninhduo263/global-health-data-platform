@@ -234,13 +234,24 @@ services:
     command:
       - -c
       - |
+        mkdir -p /opt/airflow/logs /opt/airflow/dags /opt/airflow/plugins
+        airflow db migrate
+        airflow users create \
+          --username "$${_AIRFLOW_WWW_USER_USERNAME}" \
+          --password "$${_AIRFLOW_WWW_USER_PASSWORD}" \
+          --firstname Data \
+          --lastname Engineer \
+          --role Admin \
+          --email "$${_AIRFLOW_WWW_USER_EMAIL}" || true
+        python3 -c "
         import os, boto3
         from botocore.exceptions import ClientError
         s3 = boto3.client('s3', endpoint_url=os.getenv('MINIO_ENDPOINT', 'http://minio:9000'),
-        (superset fab create-admin --username "$${SUPERSET_ADMIN_USER}" --firstname Superset --lastname Admin --email "$${SUPERSET_ADMIN_EMAIL}" --password "$${SUPERSET_ADMIN_PASSWORD}" || true) &&
+                          aws_access_key_id=os.getenv('MINIO_ROOT_USER', 'minioadmin'),
                           aws_secret_access_key=os.getenv('MINIO_ROOT_PASSWORD', 'minioadmin123'))
-        superset set-database-uri --database_name "Health DWH" --uri "postgresql+psycopg2://${POSTGRES_USER:-dwh_admin}:${POSTGRES_PASSWORD:-dwh_password}@postgres-dwh:5432/${POSTGRES_DB:-health_dwh}" &&
+        bucket = os.getenv('MINIO_BUCKET_NAME', 'covid19-landing-zone')
         try:
+            s3.head_bucket(Bucket=bucket)
         except ClientError:
             s3.create_bucket(Bucket=bucket)
             print(f'Created MinIO bucket: {bucket}')
@@ -251,6 +262,7 @@ services:
       _AIRFLOW_WWW_USER_CREATE: "true"
       _AIRFLOW_WWW_USER_USERNAME: ${AIRFLOW_ADMIN_USER:-admin}
       _AIRFLOW_WWW_USER_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:-admin}
+      _AIRFLOW_WWW_USER_EMAIL: ${AIRFLOW_ADMIN_EMAIL:-admin@healthplatform.local}
 
   airflow-webserver:
     <<: *airflow-common

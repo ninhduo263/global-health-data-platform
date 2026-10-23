@@ -10,9 +10,8 @@ Luồng xử lý: [extract_owid_api, extract_who_csv, extract_mysql_oltp] >> loa
 """
 
 import csv
-import io
-import json
 import logging
+import math
 import os
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -25,7 +24,10 @@ logger = logging.getLogger("airflow.task")
 # ============================================================================
 # CẤU HÌNH ENDPOINT LIVE API & KẾT NỐI HỆ THỐNG
 # ============================================================================
-# Nguồn 1: Live Our World in Data COVID-19 Catalog & Disease.sh Open COVID API
+OWID_API_URL = os.getenv(
+    "OWID_API_URL",
+    "https://raw.githubusercontent.com/owid/covid-19-data/master/public/data/owid-covid-data.csv",
+)
 OWID_LIVE_CSV_URL = os.getenv(
     "OWID_LIVE_CSV_URL",
     "https://catalog.ourworldindata.org/garden/covid/latest/compact/compact.csv",
@@ -71,108 +73,65 @@ DWH_DB = os.getenv("DWH_DB", "health_dwh")
 DWH_USER = os.getenv("DWH_USER", "dwh_admin")
 DWH_PASSWORD = os.getenv("DWH_PASSWORD", "dwh_password")
 
-
 # ============================================================================
 # CÁC HÀM XỬ LÝ CHO TỪNG TASK (100% LIVE API & DATABASE QUERIES)
 # ============================================================================
 
 def extract_owid_api_callable(**context) -> str:
     """
-    Task 1 (Nguồn 1 - Live API Chuỗi thời gian):
-    Gọi trực tiếp HTTP GET tới Our World in Data Live Catalog API và Disease.sh API
-    để lấy dữ liệu thực tế hàng ngày về:
-      - Ca nhiễm mới (new_cases)
-      - Tử vong mới (new_deaths)
-      - Số lượng xét nghiệm mới (new_tests)
-      - Tổng số liều vắc-xin lũy kế (total_vaccinations)
+    Download OWID's historical global COVID-19 dataset as a raw CSV snapshot.
     """
-    import pandas as pd
+    import csv
+
     import requests
 
     execution_date = context["ds_nodash"]
     STAGING_DIR.mkdir(parents=True, exist_ok=True)
-    output_file = STAGING_DIR / f"owid_timeseries_{execution_date}.json"
+    output_file = STAGING_DIR / f"owid_covid_{execution_date}.csv"
 
-    logger.info("Đang tải dữ liệu chuỗi thời gian TRỰC TIẾP từ OWID Live API: %s", OWID_LIVE_CSV_URL)
+    logger.info("Tải dữ liệu COVID-19 lịch sử toàn cầu từ OWID: %s", OWID_API_URL)
+    with requests.get(
+        OWID_API_URL,
+        stream=True,
+        timeout=(15, 300),
+        headers={"User-Agent": "global-health-data-platform/1.0"},
+    ) as response:
+        response.raise_for_status()
+        with output_file.open("wb") as output:
+            for chunk in response.iter_content(chunk_size=1024 * 1024):
+                if chunk:
+                    output.write(chunk)
 
-    # 1. Gọi Live API từ Disease.sh để lấy thêm tổng số xét nghiệm thực tế mới nhất của từng quốc gia
-    disease_sh_url = f"{DISEASE_SH_API_URL}/{','.join(TARGET_COUNTRIES)}"
-    resp_live = requests.get(disease_sh_url, timeout=30)
-    resp_live.raise_for_status()
-    disease_sh_summary = {
-        item["countryInfo"]["iso3"]: {
-            "total_tests_latest": item.get("tests", 0),
-            "cases_latest": item.get("cases", 0),
-            "deaths_latest": item.get("deaths", 0),
-            "updated_epoch": item.get("updated"),
-        }
-        for item in resp_live.json()
-        if item.get("countryInfo", {}).get("iso3")
-    }
-    logger.info("Đã lấy Live Summary từ Disease.sh API cho %d quốc gia.", len(disease_sh_summary))
-
-    # 2. Tải trực tiếp luồng dữ liệu chuỗi thời gian từ Our World in Data Live Catalog
-    usecols = [
-        "code",
-        "country",
+    required_columns = {
+        "iso_code",
+        "continent",
+        "location",
         "date",
+        "total_cases",
         "new_cases",
+        "total_deaths",
         "new_deaths",
-        "new_tests",
-        "new_tests_smoothed",
         "total_vaccinations",
-    ]
-    df = pd.read_csv(OWID_LIVE_CSV_URL, usecols=usecols)
+        "new_vaccinations",
+        "people_vaccinated",
+        "people_fully_vaccinated",
+        "population",
+        "gdp_per_capita",
+        "hospital_beds_per_thousand",
+    }
+    with output_file.open("r", encoding="utf-8-sig", newline="") as source:
+        reader = csv.DictReader(source)
+        missing_columns = required_columns.difference(reader.fieldnames or [])
+        if missing_columns:
+            raise ValueError(
+                "OWID CSV is missing required columns: "
+                + ", ".join(sorted(missing_columns))
+            )
+        first_row = next(reader, None)
+        if first_row is None:
+            raise ValueError("OWID CSV contains a header but no data rows")
 
-    # Lọc theo danh sách quốc gia mục tiêu và khoảng thời gian giám sát
-    df_filtered = df[
-        (df["code"].isin(TARGET_COUNTRIES))
-        & (df["date"] >= START_DATE_FILTER)
-        & (df["date"] <= END_DATE_FILTER)
-    ].copy()
-
-    # Làm sạch giá trị thiếu (NaN -> 0) và các giá trị âm do hiệu chỉnh thống kê
-    df_filtered["new_cases"] = df_filtered["new_cases"].fillna(0).clip(lower=0).astype(int)
-    df_filtered["new_deaths"] = df_filtered["new_deaths"].fillna(0).clip(lower=0).astype(int)
-    # Nếu new_tests bị trống ở một số ngày, sử dụng new_tests_smoothed thực tế của OWID
-    df_filtered["new_tests"] = (
-        df_filtered["new_tests"]
-        .fillna(df_filtered["new_tests_smoothed"])
-        .fillna(0)
-        .clip(lower=0)
-        .astype(int)
-    )
-    # Nội suy tiến (forward-fill) cho tổng số mũi tiêm lũy kế theo từng quốc gia
-    df_filtered["total_vaccinations"] = (
-        df_filtered.groupby("code")["total_vaccinations"]
-        .ffill()
-        .fillna(0)
-        .clip(lower=0)
-        .astype("int64")
-    )
-
-    owid_payload = {}
-    for iso_code, group in df_filtered.groupby("code"):
-        records = group[["date", "new_cases", "new_deaths", "new_tests", "total_vaccinations"]].to_dict(
-            orient="records"
-        )
-        owid_payload[iso_code] = {
-            "country_name": group["country"].iloc[0],
-            "disease_sh_live_summary": disease_sh_summary.get(iso_code, {}),
-            "record_count": len(records),
-            "data": records,
-        }
-
-    with open(output_file, mode="w", encoding="utf-8") as f:
-        json.dump(owid_payload, f, ensure_ascii=False, indent=2)
-
-    total_rows = sum(v["record_count"] for v in owid_payload.values())
-    logger.info(
-        "Hoàn tất trích xuất Live API Nguồn 1: %d quốc gia, %d bản ghi chuỗi thời gian -> %s",
-        len(owid_payload),
-        total_rows,
-        output_file,
-    )
+    logger.info("Đã tải dữ liệu OWID CSV toàn cầu tại: %s", output_file)
     return str(output_file)
 
 
@@ -311,75 +270,61 @@ def extract_who_csv_callable(**context) -> str:
     return str(target_csv)
 
 
-def extract_mysql_oltp_callable(**context) -> str:
-    """
-    Task 3 (Nguồn 3 - CSDL Relational DB OLTP):
-    Truy vấn trực tiếp CSDL MySQL OLTP (vaccination_oltp) để lấy dữ liệu vận hành:
-      - Danh sách bệnh nhân & khai báo y tế (bảng patients)
-      - Lịch sử tiêm chủng nội bộ (bảng vaccination_records)
-    """
+def extract_mysql_oltp_callable(**context) -> dict:
+    """Export the OLTP vaccination tables as raw CSV files for the MinIO landing zone."""
+    import csv
     import pymysql
+    from pymysql.cursors import DictCursor
 
     execution_date = context["ds_nodash"]
     STAGING_DIR.mkdir(parents=True, exist_ok=True)
-    output_file = STAGING_DIR / f"mysql_oltp_snapshot_{execution_date}.json"
 
-    logger.info("Đang truy vấn trực tiếp Nguồn 3 (MySQL OLTP) tại %s:%s/%s", OLTP_HOST, OLTP_PORT, OLTP_DB)
     conn = pymysql.connect(
         host=OLTP_HOST,
         port=OLTP_PORT,
         user=OLTP_USER,
         password=OLTP_PASSWORD,
         database=OLTP_DB,
-        cursorclass=pymysql.cursors.DictCursor,
+        cursorclass=DictCursor,
+        connect_timeout=10,
+        read_timeout=30,
+        write_timeout=30,
     )
-
+    output_paths = {}
     try:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT
-                    country_code,
-                    DATE_FORMAT(reported_date, '%Y-%m-%d') AS report_date,
-                    COUNT(*) AS patients_declared,
-                    SUM(CASE WHEN health_status = 'CONFIRMED_COVID' THEN 1 ELSE 0 END) AS confirmed_patients
-                FROM patients
-                GROUP BY country_code, DATE_FORMAT(reported_date, '%Y-%m-%d');
-                """
-            )
-            patient_stats = cur.fetchall()
-
-            cur.execute(
-                """
-                SELECT
-                    country_code,
-                    DATE_FORMAT(vaccination_date, '%Y-%m-%d') AS vax_date,
-                    COUNT(*) AS daily_vax_doses
-                FROM vaccination_records
-                GROUP BY country_code, DATE_FORMAT(vaccination_date, '%Y-%m-%d');
-                """
-            )
-            vax_stats = cur.fetchall()
-
-        oltp_payload = {
-            "extracted_at": datetime.utcnow().isoformat(),
-            "patient_declarations": patient_stats,
-            "vaccination_history": vax_stats,
-        }
-
-        with open(output_file, mode="w", encoding="utf-8") as f:
-            json.dump(oltp_payload, f, ensure_ascii=False, indent=2, default=str)
-
-        logger.info("Đã trích xuất Nguồn 3 (MySQL OLTP) thành công: %s", output_file)
-        return str(output_file)
+        with conn.cursor() as cursor:
+            for table_name, columns in {
+                "vaccination_centers": (
+                    "center_id, center_code, center_name, province, country_code, created_at"
+                ),
+                "vaccination_records": (
+                    "record_id, patient_id, citizen_hash, center_id, country_code, "
+                    "vaccine_type, dose_number, batch_number, vaccination_date, created_at, updated_at"
+                ),
+            }.items():
+                cursor.execute(f"SELECT {columns} FROM `{table_name}`")
+                rows = cursor.fetchall()
+                output_file = STAGING_DIR / f"{table_name}_{execution_date}.csv"
+                fieldnames = columns.replace(" ", "").split(",")
+                with output_file.open("w", encoding="utf-8", newline="") as csv_file:
+                    writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
+                    writer.writeheader()
+                    writer.writerows(rows)
+                output_paths[table_name] = str(output_file)
+                logger.info(
+                    "Đã trích xuất %s bản ghi từ MySQL.%s vào %s",
+                    len(rows),
+                    table_name,
+                    output_file,
+                )
     finally:
         conn.close()
 
+    return output_paths
+
 
 def load_to_minio_callable(**context) -> dict:
-    """
-    Task 4: Đẩy cả 3 nguồn dữ liệu thô vừa tải trực tiếp lên MinIO Data Lake.
-    """
+    """Upload OWID, WHO, and OLTP snapshots to MinIO."""
     import boto3
     from botocore.client import Config
     from botocore.exceptions import ClientError
@@ -387,9 +332,9 @@ def load_to_minio_callable(**context) -> dict:
     ti = context["ti"]
     execution_date = context["ds"]
 
-    owid_json_path = ti.xcom_pull(task_ids="extract_owid_api")
+    owid_csv_path = ti.xcom_pull(task_ids="extract_owid_api")
     who_csv_path = ti.xcom_pull(task_ids="extract_who_csv")
-    oltp_json_path = ti.xcom_pull(task_ids="extract_mysql_oltp")
+    mysql_oltp_paths = ti.xcom_pull(task_ids="extract_mysql_oltp")
 
     s3_client = boto3.client(
         "s3",
@@ -405,18 +350,29 @@ def load_to_minio_callable(**context) -> dict:
     except ClientError:
         s3_client.create_bucket(Bucket=MINIO_BUCKET)
 
-    s3_keys = {
-        "owid_key": f"raw/owid/{execution_date}/owid_timeseries.json",
-        "who_key": f"raw/who/{execution_date}/who_health_infrastructure.csv",
-        "oltp_key": f"raw/oltp/{execution_date}/mysql_oltp_snapshot.json",
+    # Phân vùng thư mục trên Data Lake theo ngày (Partitioning by date)
+    owid_s3_key = f"raw/owid/{execution_date}/owid_covid.csv"
+    who_s3_key = f"raw/who/{execution_date}/who_covid.csv"
+
+    s3_client.upload_file(owid_csv_path, MINIO_BUCKET, owid_s3_key)
+    logger.info("Đã upload thành công: s3://%s/%s", MINIO_BUCKET, owid_s3_key)
+
+    s3_client.upload_file(who_csv_path, MINIO_BUCKET, who_s3_key)
+    logger.info("Đã upload thành công: s3://%s/%s", MINIO_BUCKET, who_s3_key)
+
+    mysql_s3_keys = {}
+    for table_name, file_path in mysql_oltp_paths.items():
+        object_key = f"raw/oltp/{execution_date}/{table_name}.csv"
+        s3_client.upload_file(file_path, MINIO_BUCKET, object_key)
+        mysql_s3_keys[table_name] = object_key
+        logger.info("Đã upload thành công: s3://%s/%s", MINIO_BUCKET, object_key)
+
+    return {
+        "bucket": MINIO_BUCKET,
+        "owid_key": owid_s3_key,
+        "who_key": who_s3_key,
+        "oltp_keys": mysql_s3_keys,
     }
-
-    s3_client.upload_file(owid_json_path, MINIO_BUCKET, s3_keys["owid_key"])
-    s3_client.upload_file(who_csv_path, MINIO_BUCKET, s3_keys["who_key"])
-    s3_client.upload_file(oltp_json_path, MINIO_BUCKET, s3_keys["oltp_key"])
-
-    logger.info("Đã đẩy đủ 3 nguồn dữ liệu thực tế lên MinIO bucket '%s': %s", MINIO_BUCKET, s3_keys)
-    return {"bucket": MINIO_BUCKET, **s3_keys}
 
 
 def transform_and_load_to_dwh_callable(**context) -> None:
@@ -425,14 +381,17 @@ def transform_and_load_to_dwh_callable(**context) -> None:
     chuẩn hóa và nạp (Upsert) vào Snowflake Schema trên PostgreSQL DWH.
     """
     import boto3
-    import psycopg2
+    import csv
+
     from botocore.client import Config
+    import psycopg2
+    from psycopg2.extras import execute_values
 
     ti = context["ti"]
     minio_meta = ti.xcom_pull(task_ids="load_to_minio")
-    bucket = minio_meta["bucket"]
+    if not minio_meta:
+        raise ValueError("MinIO object metadata was not found")
 
-    # Kết nối MinIO để đọc trực tiếp dữ liệu từ tầng Data Lake (Landing Zone)
     s3_client = boto3.client(
         "s3",
         endpoint_url=MINIO_ENDPOINT,
@@ -441,24 +400,45 @@ def transform_and_load_to_dwh_callable(**context) -> None:
         config=Config(signature_version="s3v4"),
         region_name="us-east-1",
     )
+    STAGING_DIR.mkdir(parents=True, exist_ok=True)
+    snapshot_date = context["ds_nodash"]
+    owid_csv_path = STAGING_DIR / f"owid_from_minio_{snapshot_date}.csv"
+    who_csv_path = STAGING_DIR / f"who_from_minio_{snapshot_date}.csv"
+    s3_client.download_file(minio_meta["bucket"], minio_meta["owid_key"], str(owid_csv_path))
+    s3_client.download_file(minio_meta["bucket"], minio_meta["who_key"], str(who_csv_path))
 
-    owid_obj = s3_client.get_object(Bucket=bucket, Key=minio_meta["owid_key"])
-    owid_data = json.loads(owid_obj["Body"].read().decode("utf-8"))
-
-    who_obj = s3_client.get_object(Bucket=bucket, Key=minio_meta["who_key"])
-    who_csv_text = who_obj["Body"].read().decode("utf-8")
-
-    oltp_obj = s3_client.get_object(Bucket=bucket, Key=minio_meta["oltp_key"])
-    oltp_data = json.loads(oltp_obj["Body"].read().decode("utf-8"))
-
-    oltp_patients_lookup = {
-        (row["country_code"], row["report_date"]): int(row["patients_declared"] or 0)
-        for row in oltp_data.get("patient_declarations", [])
+    continent_codes = {
+        "Africa": "AF",
+        "Asia": "AS",
+        "Europe": "EU",
+        "North America": "NA",
+        "Oceania": "OC",
+        "South America": "SA",
     }
-    oltp_vax_lookup = {
-        (row["country_code"], row["vax_date"]): int(row["daily_vax_doses"] or 0)
-        for row in oltp_data.get("vaccination_history", [])
-    }
+
+    def integer_value(value: str) -> int:
+        """Convert missing, negative, or malformed counts to zero."""
+        try:
+            number = float(value)
+        except (TypeError, ValueError, OverflowError):
+            return 0
+        if not math.isfinite(number) or number < 0:
+            return 0
+        return int(number)
+
+    def nullable_integer(value: str):
+        try:
+            number = float(value)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        return int(number) if math.isfinite(number) and number >= 0 else None
+
+    def nullable_float(value: str):
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return None
+        return number if math.isfinite(number) and number >= 0 else None
 
     conn = psycopg2.connect(
         host=DWH_HOST,
@@ -477,6 +457,43 @@ def transform_and_load_to_dwh_callable(**context) -> None:
 
             cur.execute(
                 """
+                ALTER TABLE dwh.fact_cases
+                    ADD COLUMN IF NOT EXISTS new_vaccinations BIGINT NOT NULL DEFAULT 0
+                        CHECK (new_vaccinations >= 0),
+                    ADD COLUMN IF NOT EXISTS people_vaccinated BIGINT NOT NULL DEFAULT 0
+                        CHECK (people_vaccinated >= 0),
+                    ADD COLUMN IF NOT EXISTS people_fully_vaccinated BIGINT NOT NULL DEFAULT 0
+                        CHECK (people_fully_vaccinated >= 0),
+                    ADD COLUMN IF NOT EXISTS total_cases BIGINT NOT NULL DEFAULT 0
+                        CHECK (total_cases >= 0),
+                    ADD COLUMN IF NOT EXISTS total_deaths BIGINT NOT NULL DEFAULT 0
+                        CHECK (total_deaths >= 0);
+
+                CREATE OR REPLACE VIEW dwh.vw_dashboard_cases AS
+                SELECT
+                    d.full_date AS report_date,
+                    d.year,
+                    d.month,
+                    c.country_code,
+                    c.country_name,
+                    r.continent_name,
+                    f.new_cases,
+                    f.new_deaths,
+                    f.total_vaccinations,
+                    f.total_cases,
+                    f.total_deaths,
+                    f.new_vaccinations,
+                    f.people_vaccinated,
+                    f.people_fully_vaccinated
+                FROM dwh.fact_cases AS f
+                JOIN dwh.dim_country AS c ON c.id = f.country_id
+                JOIN dwh.dim_date AS d ON d.date_id = f.date_id
+                LEFT JOIN dwh.dim_region AS r ON r.id = c.region_id;
+                """
+            )
+
+            cur.execute(
+                """
                 INSERT INTO dwh.dim_indicator (indicator_code, description)
                 VALUES (
                     'LIVE_MULTI_SOURCE_COVID19',
@@ -488,116 +505,329 @@ def transform_and_load_to_dwh_callable(**context) -> None:
             )
             indicator_id = cur.fetchone()[0]
 
-            # 1. Nạp Nguồn 2 (WHO GHO CSV từ MinIO) vào dim_region và dim_country
-            country_id_map = {}
-            reader = csv.DictReader(io.StringIO(who_csv_text))
-            for row in reader:
-                cur.execute(
-                    """
-                    INSERT INTO dwh.dim_region (continent_code, continent_name, who_region)
-                    VALUES (%s, %s, %s)
-                    ON CONFLICT (continent_code) DO UPDATE SET
-                        continent_name = EXCLUDED.continent_name,
-                        who_region = EXCLUDED.who_region
-                    RETURNING id;
-                    """,
-                    (row["continent_code"], row["continent_name"], row["who_region"]),
-                )
-                region_id = cur.fetchone()[0]
-
-                cur.execute(
-                    """
-                    INSERT INTO dwh.dim_country (
-                        country_code, country_name, population, gdp,
-                        beds_per_1000, life_expectancy, region_id
-                    )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (country_code) DO UPDATE SET
-                        country_name = EXCLUDED.country_name,
-                        population = EXCLUDED.population,
-                        gdp = EXCLUDED.gdp,
-                        beds_per_1000 = EXCLUDED.beds_per_1000,
-                        life_expectancy = EXCLUDED.life_expectancy,
-                        region_id = EXCLUDED.region_id,
-                        updated_at = CURRENT_TIMESTAMP
-                    RETURNING id;
-                    """,
-                    (
-                        row["country_code"],
-                        row["country_name"],
-                        int(row["population"]),
-                        float(row["gdp"]),
-                        float(row["beds_per_1000"]),
-                        float(row["life_expectancy"]),
-                        region_id,
-                    ),
-                )
-                country_id_map[row["country_code"]] = cur.fetchone()[0]
-
-            # 2. Nạp Nguồn 1 (OWID Live Time-series) + Nguồn 3 (MySQL OLTP) vào dim_date & fact_cases
-            fact_rows_upserted = 0
-            for country_code, payload in owid_data.items():
-                country_id = country_id_map.get(country_code)
-                if not country_id:
-                    continue
-
-                for record in payload.get("data", []):
-                    date_str = record["date"]
-                    dt = datetime.strptime(date_str, "%Y-%m-%d").date()
-                    date_id = int(dt.strftime("%Y%m%d"))
-                    is_weekend = dt.isoweekday() in (6, 7)
+            with open(who_csv_path, mode="r", encoding="utf-8-sig", newline="") as source:
+                for row in csv.DictReader(source):
+                    country_code = (row.get("country_code") or "").strip()
+                    continent_code = (row.get("continent_code") or "").strip()
+                    continent_name = (row.get("continent_name") or "").strip()
+                    if not country_code or not continent_code or not continent_name:
+                        continue
 
                     cur.execute(
                         """
-                        INSERT INTO dwh.dim_date (date_id, full_date, year, month, day, is_weekend)
-                        VALUES (%s, %s, %s, %s, %s, %s)
-                        ON CONFLICT (date_id) DO NOTHING;
+                        INSERT INTO dwh.dim_region (continent_code, continent_name, who_region)
+                        VALUES (%s, %s, %s)
+                        ON CONFLICT (continent_code) DO UPDATE SET
+                            continent_name = EXCLUDED.continent_name,
+                            who_region = EXCLUDED.who_region
+                        RETURNING id;
                         """,
-                        (date_id, dt, dt.year, dt.month, dt.day, is_weekend),
+                        (continent_code, continent_name, row.get("who_region") or "UNK"),
                     )
-
-                    internal_vax = oltp_vax_lookup.get((country_code, date_str), 0)
-                    internal_patients = oltp_patients_lookup.get((country_code, date_str), 0)
-
+                    region_id = cur.fetchone()[0]
                     cur.execute(
                         """
-                        INSERT INTO dwh.fact_cases (
-                            country_id, date_id, indicator_id,
-                            new_cases, new_deaths, new_tests,
-                            total_vaccinations, internal_vax_doses, internal_patients_declared
+                        INSERT INTO dwh.dim_country (
+                            country_code, country_name, population, gdp,
+                            beds_per_1000, life_expectancy, region_id
                         )
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                        ON CONFLICT (country_id, date_id) DO UPDATE SET
-                            indicator_id = EXCLUDED.indicator_id,
-                            new_cases = EXCLUDED.new_cases,
-                            new_deaths = EXCLUDED.new_deaths,
-                            new_tests = EXCLUDED.new_tests,
-                            total_vaccinations = EXCLUDED.total_vaccinations,
-                            internal_vax_doses = EXCLUDED.internal_vax_doses,
-                            internal_patients_declared = EXCLUDED.internal_patients_declared;
+                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (country_code) DO UPDATE SET
+                            country_name = EXCLUDED.country_name,
+                            population = COALESCE(EXCLUDED.population, dwh.dim_country.population),
+                            gdp = COALESCE(EXCLUDED.gdp, dwh.dim_country.gdp),
+                            beds_per_1000 = COALESCE(
+                                EXCLUDED.beds_per_1000, dwh.dim_country.beds_per_1000
+                            ),
+                            life_expectancy = COALESCE(
+                                EXCLUDED.life_expectancy, dwh.dim_country.life_expectancy
+                            ),
+                            region_id = EXCLUDED.region_id,
+                            updated_at = CURRENT_TIMESTAMP
+                        RETURNING id;
                         """,
                         (
-                            country_id,
-                            date_id,
-                            indicator_id,
-                            int(record.get("new_cases", 0)),
-                            int(record.get("new_deaths", 0)),
-                            int(record.get("new_tests", 0)),
-                            int(record.get("total_vaccinations", 0)) + internal_vax,
-                            internal_vax,
-                            internal_patients,
+                            country_code,
+                            row.get("country_name") or country_code,
+                            nullable_integer(row.get("population")),
+                            nullable_float(row.get("gdp")),
+                            nullable_float(row.get("beds_per_1000")),
+                            nullable_float(row.get("life_expectancy")),
+                            region_id,
                         ),
                     )
-                    fact_rows_upserted += 1
+
+            country_ids = {}
+            region_ids = {}
+            date_ids = set()
+            fact_rows = []
+            loaded_rows = 0
+
+            def flush_facts():
+                if not fact_rows:
+                    return
+                execute_values(
+                    cur,
+                    """
+                    INSERT INTO dwh.fact_cases (
+                        country_id, date_id, indicator_id, new_cases, new_deaths, new_tests,
+                        total_vaccinations, new_vaccinations, people_vaccinated,
+                        people_fully_vaccinated, total_cases, total_deaths
+                    ) VALUES %s
+                    ON CONFLICT (country_id, date_id) DO UPDATE SET
+                        indicator_id = EXCLUDED.indicator_id,
+                        new_cases = EXCLUDED.new_cases,
+                        new_deaths = EXCLUDED.new_deaths,
+                        new_tests = EXCLUDED.new_tests,
+                        total_vaccinations = EXCLUDED.total_vaccinations,
+                        new_vaccinations = EXCLUDED.new_vaccinations,
+                        people_vaccinated = EXCLUDED.people_vaccinated,
+                        people_fully_vaccinated = EXCLUDED.people_fully_vaccinated,
+                        total_cases = EXCLUDED.total_cases,
+                        total_deaths = EXCLUDED.total_deaths;
+                    """,
+                    fact_rows,
+                    page_size=1000,
+                )
+                fact_rows.clear()
+
+            with open(owid_csv_path, mode="r", encoding="utf-8-sig", newline="") as source:
+                reader = csv.DictReader(source)
+                for record in reader:
+                    country_code = (record.get("iso_code") or "").strip()
+                    continent = (record.get("continent") or "").strip()
+                    country_name = (record.get("location") or "").strip()
+                    if (
+                        len(country_code) != 3
+                        or not country_code.isalpha()
+                        or not continent
+                        or not country_name
+                    ):
+                        continue
+
+                    if country_code not in country_ids:
+                        if continent not in region_ids:
+                            region_code = continent_codes.get(continent)
+                            if region_code is None:
+                                logger.warning("Bỏ qua châu lục OWID chưa ánh xạ: %s", continent)
+                                continue
+                            cur.execute(
+                                """
+                                INSERT INTO dwh.dim_region (continent_code, continent_name)
+                                VALUES (%s, %s)
+                                ON CONFLICT (continent_code) DO UPDATE
+                                    SET continent_name = EXCLUDED.continent_name
+                                RETURNING id;
+                                """,
+                                (region_code, continent),
+                            )
+                            region_ids[continent] = cur.fetchone()[0]
+
+                        cur.execute(
+                            """
+                            INSERT INTO dwh.dim_country (
+                                country_code, country_name, population, gdp, beds_per_1000,
+                                region_id
+                            )
+                            VALUES (%s, %s, %s, %s, %s, %s)
+                            ON CONFLICT (country_code) DO UPDATE SET
+                                country_name = EXCLUDED.country_name,
+                                population = COALESCE(EXCLUDED.population, dwh.dim_country.population),
+                                gdp = COALESCE(EXCLUDED.gdp, dwh.dim_country.gdp),
+                                beds_per_1000 = COALESCE(
+                                    EXCLUDED.beds_per_1000, dwh.dim_country.beds_per_1000
+                                ),
+                                region_id = EXCLUDED.region_id,
+                                updated_at = CURRENT_TIMESTAMP
+                            RETURNING id;
+                            """,
+                            (
+                                country_code,
+                                country_name,
+                                nullable_integer(record.get("population")),
+                                nullable_float(record.get("gdp_per_capita")),
+                                nullable_float(record.get("hospital_beds_per_thousand")),
+                                region_ids[continent],
+                            ),
+                        )
+                        country_ids[country_code] = cur.fetchone()[0]
+
+                    date_value = (record.get("date") or "").strip()
+                    if not date_value:
+                        continue
+                    dt = datetime.strptime(date_value, "%Y-%m-%d").date()
+                    date_id = int(dt.strftime("%Y%m%d"))
+                    if date_id not in date_ids:
+                        cur.execute(
+                            """
+                            INSERT INTO dwh.dim_date (
+                                date_id, full_date, year, month, day, is_weekend
+                            )
+                            VALUES (%s, %s, %s, %s, %s, %s)
+                            ON CONFLICT (date_id) DO NOTHING;
+                            """,
+                            (date_id, dt, dt.year, dt.month, dt.day, dt.isoweekday() in (6, 7)),
+                        )
+                        date_ids.add(date_id)
+
+                    fact_rows.append(
+                        (
+                            country_ids[country_code],
+                            date_id,
+                            indicator_id,
+                            integer_value(record.get("new_cases")),
+                            integer_value(record.get("new_deaths")),
+                            integer_value(record.get("new_tests")),
+                            integer_value(record.get("total_vaccinations")),
+                            integer_value(record.get("new_vaccinations")),
+                            integer_value(record.get("people_vaccinated")),
+                            integer_value(record.get("people_fully_vaccinated")),
+                            integer_value(record.get("total_cases")),
+                            integer_value(record.get("total_deaths")),
+                        )
+                    )
+                    loaded_rows += 1
+                    if len(fact_rows) >= 5000:
+                        flush_facts()
+
+            flush_facts()
+            if loaded_rows == 0:
+                raise ValueError("OWID CSV contains no valid country-level observations")
 
         conn.commit()
         logger.info(
-            "Đã đọc từ MinIO và nạp thành công %d bản ghi thực tế vào dwh.fact_cases!",
-            fact_rows_upserted,
+            "Đã nạp %s quan sát OWID cho %s quốc gia và %s ngày vào DWH.",
+            loaded_rows,
+            len(country_ids),
+            len(date_ids),
         )
     except Exception as exc:
         conn.rollback()
         logger.error("Lỗi khi nạp dữ liệu vào DWH: %s", exc)
+        raise
+    finally:
+        conn.close()
+
+
+def cluster_weekly_covid_callable(**context) -> None:
+    """Cluster weekly country-level COVID-19 observations and persist them to DWH."""
+    import psycopg2
+    from psycopg2.extras import execute_values
+
+    from weekly_covid_kmeans import cluster_weekly_records
+
+    conn = psycopg2.connect(
+        host=DWH_HOST,
+        port=DWH_PORT,
+        dbname=DWH_DB,
+        user=DWH_USER,
+        password=DWH_PASSWORD,
+    )
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                WITH weekly AS (
+                    SELECT
+                        c.country_code,
+                        c.country_name,
+                        c.population,
+                        date_trunc('week', d.full_date)::date AS week_start,
+                        SUM(f.new_cases)::bigint AS weekly_cases,
+                        SUM(f.new_deaths)::bigint AS weekly_deaths
+                    FROM dwh.fact_cases AS f
+                    JOIN dwh.dim_country AS c ON c.id = f.country_id
+                    JOIN dwh.dim_date AS d ON d.date_id = f.date_id
+                    WHERE c.population > 0
+                    GROUP BY c.country_code, c.country_name, c.population,
+                             date_trunc('week', d.full_date)::date
+                ),
+                with_previous_week AS (
+                    SELECT
+                        weekly.*,
+                        LAG(weekly_cases) OVER (
+                            PARTITION BY country_code ORDER BY week_start
+                        ) AS previous_week_cases
+                    FROM weekly
+                )
+                SELECT
+                    week_start,
+                    country_code,
+                    country_name,
+                    population,
+                    weekly_cases,
+                    weekly_deaths,
+                    previous_week_cases
+                FROM with_previous_week
+                ORDER BY week_start, country_code
+                """
+            )
+            columns = (
+                "week_start",
+                "country_code",
+                "country_name",
+                "population",
+                "weekly_cases",
+                "weekly_deaths",
+                "previous_week_cases",
+            )
+            weekly_records = [dict(zip(columns, row)) for row in cur.fetchall()]
+            if not weekly_records:
+                raise ValueError("No weekly country-level COVID-19 records found in DWH")
+
+            clustered_records = cluster_weekly_records(
+                weekly_records,
+                requested_clusters=int(os.getenv("COVID_KMEANS_CLUSTERS", "4")),
+            )
+            cluster_count = len({record["cluster_id"] for record in clustered_records})
+            values = [
+                (
+                    record["week_start"],
+                    record["country_code"],
+                    record["country_name"],
+                    record["cluster_id"],
+                    cluster_count,
+                    record["weekly_cases"],
+                    record["weekly_deaths"],
+                    record["population"],
+                    record["cases_per_100k"],
+                    record["deaths_per_100k"],
+                    record["case_growth_pct"],
+                    "weekly-kmeans-v1",
+                )
+                for record in clustered_records
+            ]
+            execute_values(
+                cur,
+                """
+                INSERT INTO dwh.fact_weekly_covid_cluster (
+                    week_start, country_code, country_name, cluster_id, cluster_count,
+                    weekly_cases, weekly_deaths, population, cases_per_100k,
+                    deaths_per_100k, case_growth_pct, model_version
+                ) VALUES %s
+                ON CONFLICT (week_start, country_code, model_version) DO UPDATE SET
+                    country_name = EXCLUDED.country_name,
+                    cluster_id = EXCLUDED.cluster_id,
+                    cluster_count = EXCLUDED.cluster_count,
+                    weekly_cases = EXCLUDED.weekly_cases,
+                    weekly_deaths = EXCLUDED.weekly_deaths,
+                    population = EXCLUDED.population,
+                    cases_per_100k = EXCLUDED.cases_per_100k,
+                    deaths_per_100k = EXCLUDED.deaths_per_100k,
+                    case_growth_pct = EXCLUDED.case_growth_pct,
+                    computed_at = CURRENT_TIMESTAMP
+                """,
+                values,
+                page_size=1000,
+            )
+        conn.commit()
+        logger.info(
+            "Persisted %s weekly country observations into %s K-means clusters",
+            len(clustered_records),
+            cluster_count,
+        )
+    except Exception:
+        conn.rollback()
         raise
     finally:
         conn.close()
@@ -619,7 +849,10 @@ default_args = {
 with DAG(
     dag_id="health_data_pipeline",
     default_args=default_args,
-    description="Live Multi-Source Public Health Pipeline: Live OWID/Disease.sh API + Live WHO GHO API + MySQL OLTP -> MinIO -> Postgres DWH",
+    description=(
+        "Nạp lịch sử COVID-19 toàn cầu theo quốc gia/ngày từ OWID cùng dữ liệu WHO "
+        "vào MinIO và PostgreSQL DWH."
+    ),
     schedule_interval="@daily",
     start_date=datetime(2024, 1, 1),
     catchup=False,
@@ -627,10 +860,11 @@ with DAG(
     tags=["public_health", "live_api", "owid", "who_gho", "mysql_oltp", "minio", "snowflake_dwh"],
 ) as dag:
 
+    # Task 1: Tải snapshot CSV COVID-19 toàn cầu từ Our World in Data
     extract_owid_api = PythonOperator(
         task_id="extract_owid_api",
         python_callable=extract_owid_api_callable,
-        doc_md="Nguồn 1 (Live API): Gọi trực tiếp Our World in Data Catalog & Disease.sh API.",
+        doc_md="Tải dữ liệu COVID-19 lịch sử toàn cầu dạng CSV từ Our World in Data.",
     )
 
     extract_who_csv = PythonOperator(
@@ -642,19 +876,32 @@ with DAG(
     extract_mysql_oltp = PythonOperator(
         task_id="extract_mysql_oltp",
         python_callable=extract_mysql_oltp_callable,
-        doc_md="Nguồn 3 (MySQL OLTP): Truy vấn trực tiếp bảng patients & vaccination_records.",
+        doc_md="Xuất các bảng vaccination_centers và vaccination_records sang CSV.",
     )
 
     load_to_minio = PythonOperator(
         task_id="load_to_minio",
         python_callable=load_to_minio_callable,
-        doc_md="Đẩy cả 3 nguồn dữ liệu thực tế lên MinIO bucket covid19-landing-zone.",
+        doc_md="Upload các file CSV thô lên bucket `covid19-landing-zone` trong MinIO.",
     )
 
     transform_and_load_to_dwh = PythonOperator(
         task_id="transform_and_load_to_dwh",
         python_callable=transform_and_load_to_dwh_callable,
-        doc_md="Đọc trực tiếp 3 nguồn từ MinIO và Upsert vào PostgreSQL DWH.",
+        doc_md=(
+            "Nạp dữ liệu OWID theo quốc gia/ngày vào dim_country, dim_region, dim_date "
+            "và fact_cases."
+        ),
+    )
+
+    weekly_covid_kmeans = PythonOperator(
+        task_id="weekly_covid_kmeans",
+        python_callable=cluster_weekly_covid_callable,
+        doc_md=(
+            "Tổng hợp ca mắc/tử vong theo quốc gia-tuần, phân cụm K-means theo "
+            "mức ca, tử vong và biến động ca, lưu vào dwh.vw_weekly_covid_clusters."
+        ),
     )
 
     [extract_owid_api, extract_who_csv, extract_mysql_oltp] >> load_to_minio >> transform_and_load_to_dwh
+    transform_and_load_to_dwh >> weekly_covid_kmeans

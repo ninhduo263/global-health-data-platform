@@ -23,8 +23,8 @@ WHO_CSV_SOURCE_PATH = os.getenv(
     "WHO_CSV_SOURCE_PATH",
     "/opt/airflow/data/raw/WHO-COVID-19-global-daily-data.csv",
 )
-WHO_START_DATE = date.fromisoformat(os.getenv("WHO_START_DATE", "2023-01-01"))
-WHO_END_DATE = date.fromisoformat(os.getenv("WHO_END_DATE", "2024-12-31"))
+WHO_START_DATE = date.fromisoformat(os.getenv("WHO_START_DATE", "2020-01-01"))
+WHO_END_DATE = date.fromisoformat(os.getenv("WHO_END_DATE", "2023-12-31"))
 WHO_COUNTRY_CODES = tuple(
     code.strip().upper()
     for code in os.getenv(

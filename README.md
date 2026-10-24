@@ -10,7 +10,7 @@ Hệ thống Data Platform cục bộ chạy trên Docker Compose (Windows WSL2)
 | **MySQL (OLTP)** | `mysql-oltp` | `localhost:3307` | `root` / `root_password` | Database: `vaccination_oltp` (`oltp_user` / `oltp_password`) |
 | **MinIO API** | `minio` | `http://localhost:9000` | `minioadmin` / `minioadmin123` | S3-compatible endpoint |
 | **MinIO Console** | `minio` | `http://localhost:9001` | `minioadmin` / `minioadmin123` | Bucket mặc định: `covid19-landing-zone` |
-| **Airflow Webserver** | `airflow-webserver` | `http://localhost:8081` | `admin` / `admin` | DAG: `health_data_pipeline` |
+| **Airflow Webserver** | `airflow-webserver` | `http://localhost:8081` | `admin` / `admin` | DAG: `health_data_pipeline`; dùng cookie riêng `airflow_session` |
 | **Apache Superset** | `superset` | `http://localhost:8089` | `admin` / `admin` | SQLAlchemy URI kết nối DWH: `postgresql+psycopg2://dwh_admin:dwh_password@postgres-dwh:5432/health_dwh` |
 | **Debezium Connect** | `debezium` | `http://localhost:8083` | *(REST API)* | Đăng ký connector từ `config/debezium/register-mysql-connector.json` |
 | **Kafka Broker** | `kafka` | `localhost:9092` | - | Internal: `kafka:9092` |
@@ -29,6 +29,14 @@ Pipeline WHO đọc `data/raw/WHO-COVID-19-global-daily-data.csv`, lọc 15 mã
 `VN,US,GB,DE,FR,IT,ES,IN,CN,JP,KR,BR,RU,AU,CA` trong giai đoạn
 `2020-01-01` đến `2023-12-31`. Mã Việt Nam trong file WHO là `VN` (ISO-2);
 OWID và CDC dùng `VNM` (ISO-3). WHO và OWID được giữ ở các fact/view riêng, không join trực tiếp bằng mã quốc gia.
+
+Airflow dùng cookie phiên riêng vì cookie trình duyệt không phân biệt port; nếu
+đã mở Airflow trước khi đổi cấu hình, hãy recreate webserver rồi mở lại
+`http://localhost:8081` trong cửa sổ ẩn danh hoặc xoá cookie của `localhost`.
+
+```powershell
+docker compose up -d --force-recreate airflow-webserver airflow-scheduler
+```
 
 ## 3. Các luồng dữ liệu
 

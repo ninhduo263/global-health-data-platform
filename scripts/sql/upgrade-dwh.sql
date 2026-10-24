@@ -30,6 +30,8 @@ ALTER TABLE dwh.fact_cases
     DROP CONSTRAINT IF EXISTS fact_cases_new_deaths_check;
 
 ALTER TABLE dwh.fact_cases
+    ADD COLUMN IF NOT EXISTS new_tests BIGINT NOT NULL DEFAULT 0
+        CHECK (new_tests >= 0),
     ADD COLUMN IF NOT EXISTS new_vaccinations BIGINT NOT NULL DEFAULT 0
         CHECK (new_vaccinations >= 0),
     ADD COLUMN IF NOT EXISTS people_vaccinated BIGINT NOT NULL DEFAULT 0

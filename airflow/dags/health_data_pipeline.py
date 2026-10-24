@@ -23,8 +23,8 @@ WHO_CSV_SOURCE_PATH = os.getenv(
     "WHO_CSV_SOURCE_PATH",
     "/opt/airflow/data/raw/WHO-COVID-19-global-daily-data.csv",
 )
-WHO_START_DATE = date.fromisoformat(os.getenv("WHO_START_DATE", "2020-01-01"))
-WHO_END_DATE = date.fromisoformat(os.getenv("WHO_END_DATE", "2023-12-31"))
+WHO_START_DATE = date.fromisoformat(os.getenv("WHO_START_DATE", "2023-01-01"))
+WHO_END_DATE = date.fromisoformat(os.getenv("WHO_END_DATE", "2024-12-31"))
 WHO_COUNTRY_CODES = tuple(
     code.strip().upper()
     for code in os.getenv(
@@ -180,19 +180,26 @@ def extract_mysql_oltp_callable(**context) -> dict:
     output_paths = {}
     try:
         with conn.cursor() as cursor:
-            for table_name, columns in {
-                "vaccination_centers": (
-                    "center_id, center_code, center_name, province, country_code, created_at"
-                ),
-                "vaccination_records": (
-                    "record_id, patient_id, citizen_hash, center_id, country_code, "
-                    "vaccine_type, dose_number, batch_number, vaccination_date, created_at, updated_at"
-                ),
-            }.items():
-                cursor.execute(f"SELECT {columns} FROM `{table_name}`")
+            for table_name in ("vaccination_centers", "vaccination_records"):
+                cursor.execute(
+                    """
+                    SELECT COLUMN_NAME
+                    FROM INFORMATION_SCHEMA.COLUMNS
+                    WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s
+                    ORDER BY ORDINAL_POSITION
+                    """,
+                    (OLTP_DB, table_name),
+                )
+                fieldnames = [row["COLUMN_NAME"] for row in cursor.fetchall()]
+                if not fieldnames:
+                    raise ValueError(
+                        f"MySQL table {OLTP_DB}.{table_name} was not found or has no columns"
+                    )
+
+                quoted_columns = ", ".join(f"`{column}`" for column in fieldnames)
+                cursor.execute(f"SELECT {quoted_columns} FROM `{table_name}`")
                 rows = cursor.fetchall()
                 output_file = STAGING_DIR / f"{table_name}_{execution_date}.csv"
-                fieldnames = columns.replace(" ", "").split(",")
                 with output_file.open("w", encoding="utf-8", newline="") as csv_file:
                     writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
                     writer.writeheader()
@@ -342,7 +349,11 @@ def transform_and_load_to_dwh_callable(**context) -> None:
             cur.execute("DELETE FROM dwh.dim_country")
             cur.execute(
                 """
+                DROP VIEW IF EXISTS dwh.vw_dashboard_cases;
+
                 ALTER TABLE dwh.fact_cases
+                    ADD COLUMN IF NOT EXISTS new_tests BIGINT NOT NULL DEFAULT 0
+                        CHECK (new_tests >= 0),
                     ADD COLUMN IF NOT EXISTS new_vaccinations BIGINT NOT NULL DEFAULT 0
                         CHECK (new_vaccinations >= 0),
                     ADD COLUMN IF NOT EXISTS people_vaccinated BIGINT NOT NULL DEFAULT 0
@@ -526,6 +537,23 @@ def transform_and_load_to_dwh_callable(**context) -> None:
                             ),
                         )
                         country_ids[country_code] = cur.fetchone()[0]
+                    else:
+                        cur.execute(
+                            """
+                            UPDATE dwh.dim_country
+                            SET population = COALESCE(%s, population),
+                                gdp = COALESCE(%s, gdp),
+                                beds_per_1000 = COALESCE(%s, beds_per_1000),
+                                updated_at = CURRENT_TIMESTAMP
+                            WHERE id = %s
+                            """,
+                            (
+                                nullable_integer(record.get("population")),
+                                nullable_float(record.get("gdp_per_capita")),
+                                nullable_float(record.get("hospital_beds_per_thousand")),
+                                country_ids[country_code],
+                            ),
+                        )
 
                     date_value = (record.get("date") or "").strip()
                     if not date_value:
@@ -655,6 +683,14 @@ def cluster_weekly_covid_callable(**context) -> None:
                 requested_clusters=int(os.getenv("COVID_KMEANS_CLUSTERS", "4")),
             )
             cluster_count = len({record["cluster_id"] for record in clustered_records})
+            model_version = "weekly-kmeans-v1"
+            cur.execute(
+                """
+                DELETE FROM dwh.fact_weekly_covid_cluster
+                WHERE model_version = %s
+                """,
+                (model_version,),
+            )
             values = [
                 (
                     record["week_start"],
@@ -668,7 +704,7 @@ def cluster_weekly_covid_callable(**context) -> None:
                     record["cases_per_100k"],
                     record["deaths_per_100k"],
                     record["case_growth_pct"],
-                    "weekly-kmeans-v1",
+                    model_version,
                 )
                 for record in clustered_records
             ]

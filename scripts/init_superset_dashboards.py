@@ -146,7 +146,7 @@ COLUMN_VERBOSE_NAMES = {
     "is_selected": "Đang được chọn",
     "is_best_silhouette": "Silhouette cao nhất",
     "member_count": "Số tuần – quốc gia",
-    "member_share": "Tỉ trọng cụm",
+    "member_share": "Tỷ trọng cụm",
     "avg_cases_per_100k": "Ca mắc TB / 100.000 dân",
     "median_cases_per_100k": "Ca mắc trung vị / 100.000 dân",
     "avg_deaths_per_100k": "Tử vong TB / 100.000 dân",
@@ -178,11 +178,29 @@ COLUMN_VERBOSE_NAMES = {
     "pr_auc": "Chỉ số PR-AUC",
     "train_rows": "Số dòng huấn luyện",
     "test_rows": "Số dòng kiểm thử",
+    "true_positive": "Số dự báo đúng ổ dịch (TP)",
+    "false_positive": "Số báo động nhầm (FP)",
+    "true_negative": "Số dự báo đúng an toàn (TN)",
+    "false_negative": "Số bỏ sót ổ dịch (FN)",
+    "test_positive_rate": "Tỷ lệ bùng phát tập kiểm thử",
+    "test_start_week": "Tuần bắt đầu kiểm thử",
+    "test_end_week": "Tuần kết thúc kiểm thử",
+    "surge_ratio": "Hệ số ngưỡng bùng phát",
+    "min_cases_per_100k": "Ngưỡng ca tối thiểu / 100.000 dân",
     "feature_name": "Mã đặc trưng",
     "feature_name_vi": "Đặc trưng đầu vào",
     "importance": "Mức độ đóng góp",
     "importance_rank": "Thứ hạng quan trọng",
     "computed_at": "Thời điểm tính toán",
+    # Cột kỹ thuật bảng lõi DWH (nếu dùng trực tiếp)
+    "id": "Mã bản ghi",
+    "country_id": "Mã định danh quốc gia",
+    "date_id": "Mã ngày",
+    "indicator_id": "Mã chỉ báo",
+    "created_at": "Thời điểm tạo",
+    "new_tests": "Số xét nghiệm mới",
+    "internal_vax_doses": "Số mũi tiêm nội bộ",
+    "internal_patients_declared": "Số bệnh nhân nội bộ khai báo",
     # Khai phá Chuyển dịch Cụm Markov & Dwell Time
     "from_cluster_id": "Mã cụm nguồn",
     "from_cluster_label": "Cụm tuần hiện tại (t)",
@@ -576,7 +594,7 @@ def make_big_number_query_context(dataset_id: int, metric: dict) -> dict:
     )
 
 
-def markdown_banner(text: str, height: int = 9) -> dict:
+def markdown_banner(text: str, height: int = 13) -> dict:
     return {"kind": "markdown", "code": text, "width": 12, "height": height}
 
 
@@ -621,7 +639,7 @@ def build_grid_position(title: str, rows_spec: list) -> dict:
                     "meta": {
                         "code": entry["code"],
                         "width": entry.get("width", 12),
-                        "height": entry.get("height", 9),
+                        "height": entry.get("height", 13),
                     },
                 }
             else:
@@ -783,11 +801,11 @@ def provision_legacy_overview_dashboard(
                 markdown_banner(
                     "### Tổng quan 4 Nhóm Xu hướng Dịch tễ COVID-19\n"
                     "Phân nhóm **56.477 quan sát tuần – quốc gia** từ dữ liệu OWID dựa trên tỷ lệ mắc mới, tử vong trên 100.000 dân và tốc độ tăng trưởng tuần.",
-                    height=10,
+                    height=13,
                 )
             ],
             [(c_bubble, 8, 54), (c_pie, 4, 54)],
-            [(c_bar, 6, 50), (c_table, 6, 50)],
+            [(c_bar, 6, 52), (c_table, 6, 52)],
         ],
     )
     label_colors = {
@@ -855,8 +873,8 @@ def provision_kmeans_dashboard(
             "groupby": ["k"],
             "columns": [],
             "metrics": [
-                sql_metric("ROUND(AVG(silhouette)::numeric, 4)", "Hệ số Silhouette (cao là tốt)"),
-                sql_metric("ROUND(AVG(davies_bouldin)::numeric, 4)", "Chỉ số Davies–Bouldin (thấp là tốt)"),
+                sql_metric("ROUND(AVG(silhouette)::numeric, 3)", "Hệ số Silhouette (cao là tốt)"),
+                sql_metric("ROUND(AVG(davies_bouldin)::numeric, 3)", "Chỉ số Davies–Bouldin (thấp là tốt)"),
             ],
             "order_bars": True,
             "show_legend": True,
@@ -897,11 +915,14 @@ def provision_kmeans_dashboard(
         existing_charts=existing_charts,
     )
 
-    # 4. Pie Donut tỉ trọng cụm theo nhãn tự sinh
+    # 4. Pie Donut tỷ trọng cụm theo nhãn tự sinh
     m_members = sql_metric("SUM(member_count)", "Số tuần – quốc gia")
     c_pie = client.upsert_chart(
-        slice_name="Cơ cấu Tỉ trọng Số tuần – Quốc gia theo Nhãn Cụm",
-        legacy_names=["[K-Means] Tỉ trọng Quan sát theo Nhãn Cụm"],
+        slice_name="Cơ cấu Tỷ trọng Số tuần – Quốc gia theo Nhãn Cụm",
+        legacy_names=[
+            "Cơ cấu Tỉ trọng Số tuần – Quốc gia theo Nhãn Cụm",
+            "[K-Means] Tỉ trọng Quan sát theo Nhãn Cụm",
+        ],
         viz_type="pie",
         dataset_id=prof_id,
         params={
@@ -924,7 +945,7 @@ def provision_kmeans_dashboard(
     # 5. Bảng Hồ sơ cụm chi tiết
     prof_metrics = [
         sql_metric("MAX(member_count)", "Số tuần – QG"),
-        sql_metric("ROUND((MAX(member_share) * 100)::numeric, 1)", "Tỉ trọng (%)"),
+        sql_metric("ROUND((MAX(member_share) * 100)::numeric, 1)", "Tỷ trọng (%)"),
         sql_metric("ROUND(MAX(avg_cases_per_100k)::numeric, 1)", "Ca mắc TB / 100k"),
         sql_metric("ROUND(MAX(median_cases_per_100k)::numeric, 1)", "Ca mắc trung vị / 100k"),
         sql_metric("ROUND(MAX(avg_deaths_per_100k)::numeric, 2)", "Tử vong TB / 100k"),
@@ -958,8 +979,11 @@ def provision_kmeans_dashboard(
 
     # 6. Chuỗi thời gian Ca mắc TB/100k theo nhãn cụm
     c_trend = client.upsert_chart(
-        slice_name="Diễn biến Ca mắc Trung bình (/100.000 dân) theo Cụm qua các Năm",
-        legacy_names=["[K-Means] Diễn biến Ca mắc TB/100k theo Cụm qua Thời gian"],
+        slice_name="Diễn biến Ca mắc Trung bình (trên 100.000 dân) theo Cụm qua các Năm",
+        legacy_names=[
+            "Diễn biến Ca mắc Trung bình (/100.000 dân) theo Cụm qua các Năm",
+            "[K-Means] Diễn biến Ca mắc TB/100k theo Cụm qua Thời gian",
+        ],
         viz_type="line",
         dataset_id=clus_id,
         params={
@@ -995,6 +1019,7 @@ def provision_kmeans_dashboard(
             "show_legend": True,
             "show_bar_value": True,
             "bar_stacked": True,
+            "bottom_margin": "auto",
             "x_axis_label": "Cụm dịch tễ ở tuần hiện tại (t)",
             "y_axis_label": "Xác suất chuyển sang cụm ở tuần t+1 (%)",
             "adhoc_filters": [],
@@ -1046,27 +1071,27 @@ def provision_kmeans_dashboard(
                 markdown_banner(
                     "### Phần 1: Căn cứ lựa chọn số cụm K (Kiểm định từ K = 2 đến K = 8)\n"
                     "So sánh độ phân tán nội cụm (**Phương pháp Khuỷu tay**) và độ tách biệt giữa các cụm (**Silhouette** càng cao càng tốt, **Davies–Bouldin** càng thấp càng tốt).",
-                    height=10,
+                    height=13,
                 )
             ],
-            [(c_elbow, 6, 48), (c_sil, 6, 48)],
+            [(c_elbow, 6, 50), (c_sil, 6, 50)],
             [
                 markdown_banner(
                     "### Phần 2: Hình thái phân tách cụm trên mặt phẳng 2 chiều & Hồ sơ nghiệp vụ tự sinh\n"
                     "Mỗi cụm được hệ thống tự động đặt nhãn tiếng Việt dựa trên thứ hạng tỷ lệ ca mắc và hướng dịch chuyển của tâm cụm so với tuần liền trước.",
-                    height=10,
+                    height=13,
                 )
             ],
-            [(c_pca, 8, 56), (c_pie, 4, 56)],
-            [(c_prof_table, 6, 50), (c_trend, 6, 50)],
+            [(c_pca, 7, 56), (c_pie, 5, 56)],
+            [(c_prof_table, 6, 52), (c_trend, 6, 52)],
             [
                 markdown_banner(
-                    "### Phần 3: Khai phá Chuỗi Chuyển dịch Cụm (Markov Transition Matrix & Thời gian Lưu trú Dwell Time)\n"
-                    "Đo lường xác suất chuyển trạng thái $P(\\text{Cụm}_{t+1} \\mid \\text{Cụm}_t)$ và số tuần trung bình một quốc gia lưu lại trong từng vùng dịch.",
-                    height=10,
+                    "### Phần 3: Khai phá Chuỗi Chuyển dịch Cụm (Ma trận Markov & Thời gian Lưu trú Dwell Time)\n"
+                    "Đo lường xác suất chuyển trạng thái **P(Cụm t+1 | Cụm t)** sang tuần kế tiếp và số tuần trung bình một quốc gia lưu lại liên tục trong từng vùng dịch.",
+                    height=13,
                 )
             ],
-            [(c_markov, 6, 52), (c_dwell, 6, 52)],
+            [(c_markov, 6, 54), (c_dwell, 6, 54)],
         ],
     )
     label_colors = {
@@ -1195,6 +1220,8 @@ def provision_early_warning_dashboard(
             "show_legend": False,
             "show_bar_value": True,
             "bar_stacked": False,
+            "x_ticks_layout": "45°",
+            "bottom_margin": 110,
             "x_axis_label": "Đặc trưng dịch tễ đầu vào",
             "y_axis_label": "Tỷ trọng đóng góp (%)",
             "adhoc_filters": [
@@ -1261,17 +1288,49 @@ def provision_early_warning_dashboard(
             "donut": True,
             "show_legend": True,
             "show_labels": True,
+            "labels_outside": True,
             "number_format": ",d",
             "adhoc_filters": [],
             "row_limit": 10,
             "color_scheme": "supersetColors",
         },
         query_context=make_pie_query_context(anom_id, ["anomaly_type_vi"], m_anom_cnt),
-        description="Phân loại các điểm dị thường do Isolation Forest phát hiện trên 56.477 tuần–quốc gia.",
+        description="Phân loại các điểm dị thường do Isolation Forest phát hiện trên 56.477 tuần – quốc gia.",
         existing_charts=existing_charts,
     )
 
-    charts = [c_map, c_alert_pie, c_model_cmp, c_feat_imp, c_alert_table, c_anom_pie]
+    # 7. Bảng chi tiết Top tuần bất thường nghiêm trọng nhất (Isolation Forest)
+    m_anom_score = sql_metric("ROUND(MAX(anomaly_score)::numeric, 4)", "Điểm bất thường")
+    anom_metrics = [
+        m_anom_score,
+        sql_metric("ROUND(MAX(cases_per_100k)::numeric, 1)", "Ca mắc / 100k dân"),
+        sql_metric("ROUND(MAX(deaths_per_100k)::numeric, 2)", "Tử vong / 100k dân"),
+    ]
+    c_anom_table = client.upsert_chart(
+        slice_name="Bảng Chi tiết các Tuần Bất thường Dịch tễ Toàn cầu (Isolation Forest)",
+        viz_type="table",
+        dataset_id=anom_id,
+        params={
+            "query_mode": "aggregate",
+            "groupby": ["week_start", "country_name", "anomaly_type_vi", "explanation_vi"],
+            "metrics": anom_metrics,
+            "order_desc": True,
+            "row_limit": 60,
+            "adhoc_filters": [],
+            "show_cell_bars": True,
+        },
+        query_context=make_table_query_context(
+            anom_id,
+            ["week_start", "country_name", "anomaly_type_vi", "explanation_vi"],
+            anom_metrics,
+            orderby=[[m_anom_score, False]],
+            row_limit=60,
+        ),
+        description="Danh sách các tuần – quốc gia có điểm bất thường Isolation Forest cao nhất.",
+        existing_charts=existing_charts,
+    )
+
+    charts = [c_map, c_alert_pie, c_model_cmp, c_feat_imp, c_alert_table, c_anom_pie, c_anom_table]
     title = "Hệ thống Cảnh báo Sớm Bùng phát (XGBoost + TreeSHAP) & Bất thường (Isolation Forest)"
     pos = build_grid_position(
         title=title,
@@ -1279,20 +1338,28 @@ def provision_early_warning_dashboard(
             [
                 markdown_banner(
                     "### Phần 1: Bản đồ Giám sát & Phân tầng Nguy cơ Bùng phát Toàn cầu\n"
-                    "Mô hình học máy **XGBoost** dự báo xác suất tỷ lệ ca mắc tăng tối thiểu **1,5 lần** sau **2 tuần** (và vượt ngưỡng 10 ca/100.000 dân), kèm giải thích cục bộ **TreeSHAP** cho từng quốc gia.",
-                    height=10,
+                    "Mô hình học máy **XGBoost** dự báo xác suất tỷ lệ ca mắc tăng tối thiểu **1,5 lần** sau **2 tuần** (và vượt ngưỡng 10 ca / 100.000 dân), kèm giải thích cục bộ **TreeSHAP** cho từng quốc gia.",
+                    height=13,
                 )
             ],
             [(c_map, 8, 56), (c_alert_pie, 4, 56)],
             [
                 markdown_banner(
-                    "### Phần 2: Kiểm định Mô hình Chống Rò rỉ Thời gian & Phát hiện Bất thường (Isolation Forest)\n"
-                    "Đánh giá độc lập trên **11.006 quan sát kiểm thử** (Purged Time Split) kết hợp phát hiện các tuần dị thường lịch sử.",
-                    height=10,
+                    "### Phần 2: Kiểm định Mô hình Chống Rò rỉ Thời gian & Xếp hạng Quốc gia\n"
+                    "Đánh giá độc lập trên **11.006 quan sát kiểm thử** (Purged Time Split, khoảng trống 2 tuần) và xếp hạng các yếu tố dịch tễ đóng góp lớn nhất.",
+                    height=13,
                 )
             ],
-            [(c_model_cmp, 5, 50), (c_feat_imp, 4, 50), (c_anom_pie, 3, 50)],
+            [(c_model_cmp, 6, 54), (c_feat_imp, 6, 54)],
             [(c_alert_table, 12, 58)],
+            [
+                markdown_banner(
+                    "### Phần 3: Phát hiện Bất thường Dịch tễ Lịch sử Toàn cầu (Isolation Forest)\n"
+                    "Tự động cô lập **1.130 tuần dị thường** trên 56.477 quan sát tuần – quốc gia để tách biệt ổ dịch đột biến thật và nhiễu dồn báo cáo.",
+                    height=13,
+                )
+            ],
+            [(c_anom_pie, 5, 52), (c_anom_table, 7, 52)],
         ],
     )
     label_colors = {
@@ -1305,6 +1372,9 @@ def provision_early_warning_dashboard(
         "XGBoost (Cây tăng cường)": "#0284c7",
         "Hồi quy Logistic": "#8b5cf6",
         "Luật cơ sở (Tăng ≥ 25%)": "#64748b",
+        "Đột biến ca mắc cục bộ": "#ef4444",
+        "Tử vong tăng dị thường": "#dc2626",
+        "Nhiễu dồn / hiệu chỉnh báo cáo": "#f59e0b",
     }
     chart_ids = [c["id"] for c in charts]
     dash_id = client.upsert_dashboard(
@@ -1328,6 +1398,7 @@ def provision_cdc_patients_dashboard(
     vax_id = ds["vw_dashboard_vaccinations"]["id"]
     vax_pat_id = ds["vw_vaccination_by_patient"]["id"]
     rules_id = ds["vw_patient_association_rules"]["id"]
+    rt_id = ds["vw_realtime_anomalies"]["id"]
 
     # 1. Big Number: Tổng bệnh nhân ẩn danh
     m_total_pat = sql_metric("SUM(patient_count)", "Tổng số bệnh nhân")
@@ -1448,8 +1519,11 @@ def provision_cdc_patients_dashboard(
         ),
     ]
     c_prov_table = client.upsert_chart(
-        slice_name="Bảng Thống kê Bệnh nhân, Ca Dương tính & Bệnh nền theo Tỉnh/Thành",
-        legacy_names=["[CDC] Thống kê Bệnh nhân & Bệnh nền theo Tỉnh/Thành"],
+        slice_name="Bảng Thống kê Bệnh nhân, Ca Dương tính & Bệnh nền theo Tỉnh / Thành phố",
+        legacy_names=[
+            "Bảng Thống kê Bệnh nhân, Ca Dương tính & Bệnh nền theo Tỉnh/Thành",
+            "[CDC] Thống kê Bệnh nhân & Bệnh nền theo Tỉnh/Thành",
+        ],
         viz_type="table",
         dataset_id=pat_id,
         params={
@@ -1478,7 +1552,7 @@ def provision_cdc_patients_dashboard(
         viz_type="dist_bar",
         dataset_id=rules_id,
         params={
-            "groupby": ["rule_text_vi"],
+            "groupby": ["antecedents"],
             "columns": [],
             "metrics": [
                 sql_metric("ROUND(MAX(lift)::numeric, 2)", "Độ nâng (Lift)"),
@@ -1488,7 +1562,9 @@ def provision_cdc_patients_dashboard(
             "show_legend": True,
             "show_bar_value": True,
             "bar_stacked": False,
-            "x_axis_label": "Luật kết hợp {Điều kiện} => {Kết cục}",
+            "x_ticks_layout": "45°",
+            "bottom_margin": 115,
+            "x_axis_label": "Tổ hợp điều kiện vế trái (Antecedents)",
             "y_axis_label": "Hệ số Lift & Confidence",
             "adhoc_filters": [
                 {
@@ -1542,6 +1618,37 @@ def provision_cdc_patients_dashboard(
         existing_charts=existing_charts,
     )
 
+    # 9. Bảng Cảnh báo Ổ dịch Bất thường Thời gian thực từ Luồng Kafka CDC
+    m_rt_z = sql_metric("ROUND(MAX(z_score)::numeric, 2)", "Chỉ số Z-Score")
+    rt_metrics = [
+        sql_metric("MAX(confirmed_count)", "Ca dương tính (cửa sổ 300s)"),
+        sql_metric("ROUND(MAX(baseline_avg)::numeric, 2)", "Nền TB tỉnh khác"),
+        m_rt_z,
+    ]
+    c_rt_table = client.upsert_chart(
+        slice_name="Bảng Cảnh báo Ổ dịch Bất thường Thời gian thực (Kafka CDC)",
+        viz_type="table",
+        dataset_id=rt_id,
+        params={
+            "query_mode": "aggregate",
+            "groupby": ["alert_id", "province", "severity_vi", "alert_message_vi"],
+            "metrics": rt_metrics,
+            "order_desc": True,
+            "row_limit": 30,
+            "adhoc_filters": [],
+            "show_cell_bars": True,
+        },
+        query_context=make_table_query_context(
+            rt_id,
+            ["alert_id", "province", "severity_vi", "alert_message_vi"],
+            rt_metrics,
+            orderby=[["alert_id", False]],
+            row_limit=30,
+        ),
+        description="Cảnh báo tức thời khi số ca dương tính trên luồng Kafka CDC tại một địa phương tăng vọt bất thường.",
+        existing_charts=existing_charts,
+    )
+
     charts = [
         c_kpi_pat,
         c_kpi_vax,
@@ -1551,6 +1658,7 @@ def provision_cdc_patients_dashboard(
         c_prov_table,
         c_rules_bar,
         c_rules_table,
+        c_rt_table,
     ]
     title = "Giám sát Thời gian thực & Khai phá Luật Kết hợp — Bệnh nhân Ẩn danh & Tiêm chủng"
     pos = build_grid_position(
@@ -1560,20 +1668,28 @@ def provision_cdc_patients_dashboard(
                 markdown_banner(
                     "### Phần 1: Đồng bộ Biến động Dữ liệu Thời gian thực (MySQL → Debezium → Kafka → PostgreSQL)\n"
                     "Mọi hồ sơ bệnh nhân phát sinh mới đều được tự động loại bỏ thông tin định danh cá nhân (**họ tên, mã công dân**) trước khi đưa vào Kho dữ liệu phân tích.",
-                    height=10,
+                    height=13,
                 )
             ],
-            [(c_kpi_pat, 6, 32), (c_kpi_vax, 6, 32)],
-            [(c_age_status, 7, 50), (c_comorb_pie, 5, 50)],
-            [(c_vax_by_age, 6, 50), (c_prov_table, 6, 50)],
+            [(c_kpi_pat, 6, 36), (c_kpi_vax, 6, 36)],
+            [(c_age_status, 7, 52), (c_comorb_pie, 5, 52)],
+            [(c_vax_by_age, 6, 52), (c_prov_table, 6, 52)],
             [
                 markdown_banner(
                     "### Phần 2: Khai phá Luật Kết hợp Dịch tễ (Association Rule Mining — Apriori / FP-Growth)\n"
                     "Phát hiện các tổ hợp **{Nhóm tuổi + Bệnh nền + Số mũi tiêm / Loại vắc-xin} ⇒ {Tình trạng COVID-19}** có **Độ tin cậy (Confidence)** và **Độ nâng (Lift)** cao vượt trội.",
-                    height=10,
+                    height=13,
                 )
             ],
-            [(c_rules_bar, 5, 56), (c_rules_table, 7, 56)],
+            [(c_rules_bar, 6, 58), (c_rules_table, 6, 58)],
+            [
+                markdown_banner(
+                    "### Phần 3: Giám sát & Cảnh báo Ổ dịch Bất thường Thời gian thực (Kafka CDC Streaming)\n"
+                    "Theo dõi cửa sổ trượt **300 giây** các ca dương tính theo địa phương trên Kafka để phát hiện tức thì cụm lây nhiễm vượt ngưỡng **Z-Score**.",
+                    height=13,
+                )
+            ],
+            [(c_rt_table, 12, 46)],
         ],
     )
     label_colors = {
@@ -1638,7 +1754,7 @@ def main():
         datasets[view_name] = info
         print(f"      -> Dataset dwh.{view_name:<38} (id={info['id']}) [Đã Việt hóa nhãn cột]")
 
-    print("[3/4] Cập nhật / Việt hóa toàn bộ 21 Biểu đồ & 4 Bảng điều khiển (Dashboards)...")
+    print("[3/4] Cập nhật / Việt hóa toàn bộ Biểu đồ & 4 Bảng điều khiển (Dashboards)...")
     existing_charts = {c.get("slice_name"): c for c in client.list_all("/api/v1/chart/")}
     existing_dashboards = {d.get("slug"): d for d in client.list_all("/api/v1/dashboard/")}
 
@@ -1650,20 +1766,21 @@ def main():
     d1_id, d1_charts = provision_kmeans_dashboard(
         client, datasets, existing_charts, existing_dashboards
     )
-    print(f"      -> Dashboard 2 (id={d1_id}, {len(d1_charts)} biểu đồ): Phân tích Phân cụm Dịch tễ — Đánh giá K & Hồ sơ Cụm")
+    print(f"      -> Dashboard 2 (id={d1_id}, {len(d1_charts)} biểu đồ): Phân tích Phân cụm Dịch tễ — Đánh giá K, PCA & Markov")
 
     d2_id, d2_charts = provision_early_warning_dashboard(
         client, datasets, existing_charts, existing_dashboards
     )
-    print(f"      -> Dashboard 3 (id={d2_id}, {len(d2_charts)} biểu đồ): Hệ thống Cảnh báo Sớm Nguy cơ Bùng phát Dịch")
+    print(f"      -> Dashboard 3 (id={d2_id}, {len(d2_charts)} biểu đồ): Cảnh báo Sớm Bùng phát (XGBoost + TreeSHAP) & Isolation Forest")
 
     d3_id, d3_charts = provision_cdc_patients_dashboard(
         client, datasets, existing_charts, existing_dashboards
     )
-    print(f"      -> Dashboard 4 (id={d3_id}, {len(d3_charts)} biểu đồ): Giám sát Thời gian thực — Bệnh nhân Ẩn danh & Tiêm chủng")
+    print(f"      -> Dashboard 4 (id={d3_id}, {len(d3_charts)} biểu đồ): Giám sát Thời gian thực CDC, Luật Apriori & Ổ dịch Kafka")
 
+    total_charts = len(d0_charts) + len(d1_charts) + len(d2_charts) + len(d3_charts)
     public_base = "http://localhost:8089" if "superset:8088" in args.url else args.url.rstrip("/")
-    print("[4/4] Hoàn tất! Mở trực tiếp 4 Bảng điều khiển tiếng Việt trên trình duyệt:")
+    print(f"[4/4] Hoàn tất ({total_charts} biểu đồ trên 4 Dashboard)! Mở trực tiếp trên trình duyệt:")
     print(f"      1. Tổng quan 4 Nhóm K-Means        : {public_base}/superset/dashboard/covid19-kmeans-clusters/")
     print(f"      2. Đánh giá Số cụm K & Hồ sơ Cụm   : {public_base}/superset/dashboard/covid19-kmeans-mining/")
     print(f"      3. Cảnh báo Sớm Bùng phát (XGBoost): {public_base}/superset/dashboard/covid19-early-warning/")

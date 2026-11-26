@@ -1,4 +1,4 @@
-﻿# ==============================================================================
+# ==============================================================================
 # Script Demo Bùng nổ: Mô phỏng Ổ dịch Cục bộ Thời gian thực trên Kafka CDC
 # Phát sinh dồn dập các ca CONFIRMED_COVID tại 1 tỉnh vào MySQL OLTP
 # -> Debezium -> Kafka -> cdc-consumer phát hiện bất thường Sliding-Window Z-Score

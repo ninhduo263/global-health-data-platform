@@ -17,7 +17,18 @@ logging.basicConfig(
 logger = logging.getLogger("vaccination-cdc-consumer")
 
 DEBEZIUM_URL = os.getenv("DEBEZIUM_URL", "http://debezium:8083").rstrip("/")
-CONNECTOR_NAME = os.getenv("DEBEZIUM_CONNECTOR_NAME", "vaccination-oltp-connector")
+CONNECTOR_NAME = os.getenv("DEBEZIUM_CONNECTOR_NAME", "vaccination-oltp-connector-v2")
+# Connector cũ chỉ capture 2 bảng. Debezium không snapshot lại bảng mới được thêm
+# vào include list của connector đã có offset, nên ta tạo connector mới (snapshot
+# lại toàn bộ, consumer upsert idempotent) và gỡ connector cũ để tránh trùng event.
+LEGACY_CONNECTOR_NAMES = tuple(
+    name.strip()
+    for name in os.getenv(
+        "DEBEZIUM_LEGACY_CONNECTORS", "vaccination-oltp-connector"
+    ).split(",")
+    if name.strip()
+)
+CAPTURED_TABLES = ("vaccination_centers", "patients", "vaccination_records")
 CONNECTOR_CONFIG_PATH = Path(
     os.getenv("DEBEZIUM_CONNECTOR_CONFIG", "/app/register-mysql-connector.json")
 )
@@ -41,14 +52,14 @@ def ensure_connector() -> None:
     config["database.user"] = MYSQL_CDC_USER
     config["database.password"] = MYSQL_CDC_PASSWORD
     config["database.include.list"] = SOURCE_DATABASE
-    config["table.include.list"] = (
-        f"{SOURCE_DATABASE}.vaccination_centers,"
-        f"{SOURCE_DATABASE}.vaccination_records"
+    config["table.include.list"] = ",".join(
+        f"{SOURCE_DATABASE}.{table}" for table in CAPTURED_TABLES
     )
     deadline = time.monotonic() + 300
 
     while time.monotonic() < deadline:
         try:
+            remove_legacy_connectors()
             connector_url = f"{DEBEZIUM_URL}/connectors/{CONNECTOR_NAME}"
             response = requests.get(connector_url, timeout=5)
             connector_updated = False
@@ -115,6 +126,19 @@ def ensure_connector() -> None:
         time.sleep(5)
 
     raise TimeoutError("Debezium connector did not become ready within 5 minutes")
+
+
+def remove_legacy_connectors() -> None:
+    for legacy_name in LEGACY_CONNECTOR_NAMES:
+        if legacy_name == CONNECTOR_NAME:
+            continue
+        response = requests.delete(
+            f"{DEBEZIUM_URL}/connectors/{legacy_name}", timeout=10
+        )
+        if response.status_code in (200, 204):
+            logger.info("Removed legacy Debezium connector %s", legacy_name)
+        elif response.status_code != 404:
+            response.raise_for_status()
 
 
 def decode_message(raw_value):
@@ -209,6 +233,52 @@ def apply_center_event(cursor, operation, row) -> None:
     )
 
 
+def apply_patient_event(cursor, operation, row) -> None:
+    """Đồng bộ hồ sơ bệnh nhân đã ẩn danh: không chép full_name/citizen_hash sang DWH."""
+    patient_id = row.get("patient_id")
+    if patient_id is None:
+        raise ValueError("CDC patient event is missing patient_id")
+
+    if operation == "d":
+        cursor.execute("DELETE FROM dwh.dim_patient WHERE patient_id = %s", (patient_id,))
+        return
+
+    reported_date_id = (
+        upsert_date(cursor, row["reported_date"])
+        if row.get("reported_date") is not None
+        else None
+    )
+    cursor.execute(
+        """
+        INSERT INTO dwh.dim_patient (
+            patient_id, birth_year, gender, province, country_code,
+            health_status, comorbidity, reported_date_id, is_placeholder, updated_at
+        )
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, FALSE, CURRENT_TIMESTAMP)
+        ON CONFLICT (patient_id) DO UPDATE SET
+            birth_year = EXCLUDED.birth_year,
+            gender = EXCLUDED.gender,
+            province = EXCLUDED.province,
+            country_code = EXCLUDED.country_code,
+            health_status = EXCLUDED.health_status,
+            comorbidity = EXCLUDED.comorbidity,
+            reported_date_id = EXCLUDED.reported_date_id,
+            is_placeholder = FALSE,
+            updated_at = CURRENT_TIMESTAMP
+        """,
+        (
+            patient_id,
+            row.get("birth_year"),
+            row.get("gender"),
+            row.get("province"),
+            row.get("country_code") or "VNM",
+            row.get("health_status"),
+            row.get("comorbidity") or "None",
+            reported_date_id,
+        ),
+    )
+
+
 def apply_record_event(cursor, operation, row, key) -> None:
     record_id = (row or {}).get("record_id") or key.get("record_id")
     if record_id is None:
@@ -234,15 +304,28 @@ def apply_record_event(cursor, operation, row, key) -> None:
         """,
         (center_id,),
     )
+    patient_id = row.get("patient_id")
+    if patient_id is not None:
+        # Bản ghi tiêm có thể tới trước event bệnh nhân (khác topic, không đảm bảo thứ tự).
+        cursor.execute(
+            """
+            INSERT INTO dwh.dim_patient (patient_id, is_placeholder)
+            VALUES (%s, TRUE)
+            ON CONFLICT (patient_id) DO NOTHING
+            """,
+            (patient_id,),
+        )
     date_id = upsert_date(cursor, row["vaccination_date"])
     cursor.execute(
         """
         INSERT INTO dwh.fact_vaccination (
-            record_id, center_id, date_id, vaccine_type, dose_number, updated_at
+            record_id, center_id, patient_id, date_id, vaccine_type, dose_number,
+            updated_at
         )
-        VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+        VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
         ON CONFLICT (record_id) DO UPDATE SET
             center_id = EXCLUDED.center_id,
+            patient_id = EXCLUDED.patient_id,
             date_id = EXCLUDED.date_id,
             vaccine_type = EXCLUDED.vaccine_type,
             dose_number = EXCLUDED.dose_number,
@@ -251,6 +334,7 @@ def apply_record_event(cursor, operation, row, key) -> None:
         (
             record_id,
             center_id,
+            patient_id,
             date_id,
             row["vaccine_type"],
             row["dose_number"],
@@ -276,6 +360,8 @@ def apply_event(connection, topic, raw_key, raw_value) -> None:
                 cursor.execute("TRUNCATE TABLE dwh.fact_vaccination")
             elif table_name == "vaccination_centers":
                 cursor.execute("DELETE FROM dwh.dim_vaccination_center")
+            elif table_name == "patients":
+                cursor.execute("DELETE FROM dwh.dim_patient")
         connection.commit()
         return
 
@@ -291,6 +377,8 @@ def apply_event(connection, topic, raw_key, raw_value) -> None:
             if table_name == "vaccination_centers":
                 center_row = row or key
                 apply_center_event(cursor, operation, center_row)
+            elif table_name == "patients":
+                apply_patient_event(cursor, operation, row or key)
             elif table_name == "vaccination_records":
                 apply_record_event(cursor, operation, row, key)
             else:
@@ -307,7 +395,7 @@ def main() -> None:
     connection = connect_to_dwh()
     topic_pattern = re.compile(
         rf"^{re.escape(TOPIC_PREFIX)}\.{re.escape(SOURCE_DATABASE)}\."
-        r"(vaccination_centers|vaccination_records)$"
+        rf"({'|'.join(CAPTURED_TABLES)})$"
     )
     consumer = KafkaConsumer(
         bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS.split(","),

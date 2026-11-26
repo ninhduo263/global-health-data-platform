@@ -12,8 +12,8 @@ x-airflow-common: &airflow-common
     AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
     AIRFLOW__CORE__LOAD_EXAMPLES: "false"
     AIRFLOW__WEBSERVER__SECRET_KEY: "airflow_covid19_secret_key"
-    # Cài đặt thư viện ETL, OLTP và phân cụm weekly COVID-19
-    _PIP_ADDITIONAL_REQUIREMENTS: "boto3 psycopg2-binary pymysql requests pandas scikit-learn==1.5.2"
+    # Cài đặt thư viện ETL, OLTP, K-means và XGBoost cảnh báo sớm (bản CPU wheel gọn nhẹ)
+    _PIP_ADDITIONAL_REQUIREMENTS: "boto3 psycopg2-binary pymysql requests pandas scikit-learn==1.5.2 xgboost-cpu==2.1.4"
     # Biến môi trường truyền vào DAG
     MINIO_ENDPOINT: "http://minio:9000"
     MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
@@ -29,6 +29,12 @@ x-airflow-common: &airflow-common
     DWH_USER: ${POSTGRES_USER:-dwh_admin}
     DWH_PASSWORD: ${POSTGRES_PASSWORD:-dwh_password}
     COVID_KMEANS_CLUSTERS: ${COVID_KMEANS_CLUSTERS:-4}
+    COVID_KMEANS_K_RANGE: ${COVID_KMEANS_K_RANGE:-2-8}
+    COVID_EW_HORIZON_WEEKS: ${COVID_EW_HORIZON_WEEKS:-2}
+    COVID_EW_SURGE_RATIO: ${COVID_EW_SURGE_RATIO:-1.5}
+    COVID_EW_MIN_CASES_PER_100K: ${COVID_EW_MIN_CASES_PER_100K:-10}
+    COVID_EW_TEST_FRACTION: ${COVID_EW_TEST_FRACTION:-0.2}
+    COVID_EW_INCLUDE_CLUSTER: ${COVID_EW_INCLUDE_CLUSTER:-true}
     OLTP_HOST: "mysql-oltp"
     OLTP_PORT: "3306"
     OLTP_DB: ${MYSQL_DATABASE:-vaccination_oltp}
@@ -36,8 +42,8 @@ x-airflow-common: &airflow-common
     OLTP_PASSWORD: ${MYSQL_PASSWORD:-oltp_password}
   volumes:
     - ./airflow/dags:/opt/airflow/dags
+    - ./airflow/tests:/opt/airflow/tests:ro
     - ./airflow/logs:/opt/airflow/logs
-    - ./airflow/webserver_config.py:/opt/airflow/webserver_config.py:ro
     - ./data:/opt/airflow/data  
   networks:
     - health_data_network
@@ -84,6 +90,9 @@ services:
       - "2181:2181"
       - "2888:2888"
       - "3888:3888"
+    volumes:
+      - zookeeper_data:/zookeeper/data
+      - zookeeper_txns:/zookeeper/txns
     networks:
       - health_data_network
 
@@ -133,7 +142,8 @@ services:
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       DEBEZIUM_URL: http://debezium:8083
       DEBEZIUM_CONNECTOR_CONFIG: /app/register-mysql-connector.json
-      DEBEZIUM_CONNECTOR_NAME: vaccination-oltp-connector
+      DEBEZIUM_CONNECTOR_NAME: vaccination-oltp-connector-v2
+      DEBEZIUM_LEGACY_CONNECTORS: vaccination-oltp-connector
       MYSQL_DATABASE: ${MYSQL_DATABASE:-vaccination_oltp}
       MYSQL_CDC_USER: ${MYSQL_USER:-oltp_user}
       MYSQL_CDC_PASSWORD: ${MYSQL_PASSWORD:-oltp_password}
@@ -336,6 +346,8 @@ networks:
 
 volumes:
   mysql_oltp_data:
+  zookeeper_data:
+  zookeeper_txns:
   kafka_data:
   minio_data:
   postgres_dwh_data:

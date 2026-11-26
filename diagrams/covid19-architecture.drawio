@@ -1,0 +1,115 @@
+<mxfile host="Electron">
+  <diagram name="Kiến trúc luồng dữ liệu" id="covid19-arch">
+    <mxGraphModel dx="1096" dy="717" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1400" pageHeight="950" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="title" parent="1" style="text;html=1;align=left;verticalAlign=middle;fontSize=18;" value="&lt;b&gt;KIẾN TRÚC LUỒNG DỮ LIỆU – PHÂN TÍCH DỮ LIỆU Y TẾ CÔNG CỘNG (COVID-19)&lt;/b&gt;" vertex="1">
+          <mxGeometry height="30" width="900" x="20" as="geometry" />
+        </mxCell>
+        <mxCell id="bgSrc" parent="1" style="rounded=1;whiteSpace=wrap;html=1;verticalAlign=top;fillColor=#f0f6ff;strokeColor=#6c8ebf;arcSize=4;fontSize=13;" value="&lt;b&gt;NGUỒN DỮ LIỆU&lt;/b&gt;" vertex="1">
+          <mxGeometry height="300" width="200" x="20" y="40" as="geometry" />
+        </mxCell>
+        <mxCell id="bgAir" parent="1" style="rounded=1;whiteSpace=wrap;html=1;verticalAlign=top;fillColor=#fff8e1;strokeColor=#d6b656;arcSize=4;fontSize=13;" value="&lt;b&gt;⚙️ APACHE AIRFLOW&lt;/b&gt;&lt;br&gt;DAG: health_data_pipeline (5 task)" vertex="1">
+          <mxGeometry height="480" width="220" x="260" y="40" as="geometry" />
+        </mxCell>
+        <mxCell id="bgCdc" parent="1" style="rounded=1;whiteSpace=wrap;html=1;verticalAlign=top;align=left;spacingLeft=10;fillColor=#fff5f5;strokeColor=#b85450;dashed=1;arcSize=4;fontSize=13;" value="&lt;b&gt;LUỒNG CDC (THỜI GIAN THỰC) – chưa hoàn thiện&lt;/b&gt;" vertex="1">
+          <mxGeometry height="190" width="1060" x="20" y="700" as="geometry" />
+        </mxCell>
+        <mxCell id="src1" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="🌐 &lt;b&gt;OWID + Disease.sh&lt;/b&gt;&lt;br&gt;API chuỗi thời gian" vertex="1">
+          <mxGeometry height="50" width="160" x="40" y="90" as="geometry" />
+        </mxCell>
+        <mxCell id="src2" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="🌍 &lt;b&gt;WHO GHO API&lt;/b&gt;&lt;br&gt;hạ tầng y tế (CSV)" vertex="1">
+          <mxGeometry height="50" width="160" x="40" y="170" as="geometry" />
+        </mxCell>
+        <mxCell id="src3" parent="1" style="shape=cylinder3;boundedLbl=1;backgroundOutline=1;size=10;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="🗄️ &lt;b&gt;MySQL OLTP&lt;/b&gt;&lt;br&gt;vaccination_oltp" vertex="1">
+          <mxGeometry height="70" width="140" x="50" y="245" as="geometry" />
+        </mxCell>
+        <mxCell id="t1" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" value="extract_owid_api" vertex="1">
+          <mxGeometry height="50" width="180" x="290" y="90" as="geometry" />
+        </mxCell>
+        <mxCell id="t2" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" value="extract_who_csv" vertex="1">
+          <mxGeometry height="50" width="180" x="290" y="170" as="geometry" />
+        </mxCell>
+        <mxCell id="t3" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" value="extract_mysql_oltp" vertex="1">
+          <mxGeometry height="50" width="180" x="290" y="255" as="geometry" />
+        </mxCell>
+        <mxCell id="t4" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" value="load_to_minio" vertex="1">
+          <mxGeometry height="50" width="180" x="290" y="360" as="geometry" />
+        </mxCell>
+        <mxCell id="t5" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" value="transform_and_load_to_dwh&lt;br&gt;(chuẩn hoá + upsert)" vertex="1">
+          <mxGeometry height="50" width="180" x="290" y="450" as="geometry" />
+        </mxCell>
+        <mxCell id="minio" parent="1" style="shape=cylinder3;boundedLbl=1;backgroundOutline=1;size=12;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=11;" value="🪣 &lt;b&gt;MinIO – Data Lake&lt;/b&gt;&lt;br&gt;bucket covid19-landing-zone&lt;br&gt;raw/owid · raw/who · raw/oltp" vertex="1">
+          <mxGeometry height="100" width="220" x="560" y="335" as="geometry" />
+        </mxCell>
+        <mxCell id="dwh" parent="1" style="shape=cylinder3;boundedLbl=1;backgroundOutline=1;size=14;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;" value="🏛️ &lt;b&gt;PostgreSQL DWH&lt;/b&gt; (schema dwh)&lt;br&gt;Snowflake schema&lt;br&gt;dim_region → dim_country&lt;br&gt;dim_date · dim_indicator&lt;br&gt;&lt;b&gt;fact_cases&lt;/b&gt; (610 dòng)" vertex="1">
+          <mxGeometry height="170" width="260" x="560" y="450" as="geometry" />
+        </mxCell>
+        <mxCell id="superset" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;strokeWidth=2;fontSize=11;" value="📊 &lt;b&gt;Apache Superset (BI)&lt;/b&gt;&lt;br&gt;Dashboard xu hướng, tiêm chủng, tử vong" vertex="1">
+          <mxGeometry height="90" width="190" x="900" y="490" as="geometry" />
+        </mxCell>
+        <mxCell id="deb" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;dashed=1;" value="&lt;b&gt;Debezium&lt;/b&gt;&lt;br&gt;đọc binlog MySQL" vertex="1">
+          <mxGeometry height="60" width="170" x="40" y="750" as="geometry" />
+        </mxCell>
+        <mxCell id="kafka" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;dashed=1;" value="&lt;b&gt;Kafka&lt;/b&gt;&lt;br&gt;topic thay đổi dữ liệu" vertex="1">
+          <mxGeometry height="60" width="170" x="270" y="750" as="geometry" />
+        </mxCell>
+        <mxCell id="zk" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;dashed=1;" value="&lt;b&gt;Zookeeper&lt;/b&gt;&lt;br&gt;điều phối Kafka" vertex="1">
+          <mxGeometry height="50" width="170" x="270" y="825" as="geometry" />
+        </mxCell>
+        <mxCell id="cons" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b85450;dashed=1;strokeWidth=2;" value="&lt;b&gt;Consumer nạp DWH&lt;/b&gt;&lt;br&gt;&lt;i&gt;(cần viết: fact_vaccination)&lt;/i&gt;" vertex="1">
+          <mxGeometry height="60" width="190" x="640" y="750" as="geometry" />
+        </mxCell>
+        <mxCell id="legend" parent="1" style="rounded=1;whiteSpace=wrap;html=1;align=left;spacingLeft=10;fillColor=#ffffff;strokeColor=#666666;fontSize=12;" value="&lt;b&gt;Chú thích&lt;/b&gt;&lt;br&gt;─── nét liền: đã hoàn thành&lt;br&gt;- - - nét đứt: chưa hoàn thiện" vertex="1">
+          <mxGeometry height="80" width="200" x="900" y="40" as="geometry" />
+        </mxCell>
+        <mxCell id="e1" edge="1" parent="1" source="src1" style="endArrow=block;html=1;strokeWidth=2;" target="t1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e2" edge="1" parent="1" source="src2" style="endArrow=block;html=1;strokeWidth=2;" target="t2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e3" edge="1" parent="1" source="src3" style="endArrow=block;html=1;strokeWidth=2;" target="t3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e4" edge="1" parent="1" source="t1" style="edgeStyle=orthogonalEdgeStyle;endArrow=block;html=1;strokeWidth=2;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" target="t4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e5" edge="1" parent="1" source="t2" style="edgeStyle=orthogonalEdgeStyle;endArrow=block;html=1;strokeWidth=2;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" target="t4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e6" edge="1" parent="1" source="t3" style="edgeStyle=orthogonalEdgeStyle;endArrow=block;html=1;strokeWidth=2;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" target="t4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e7" edge="1" parent="1" source="t4" style="endArrow=block;html=1;strokeWidth=2;" target="minio" value="đẩy file thô">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e8" edge="1" parent="1" source="minio" style="edgeStyle=orthogonalEdgeStyle;endArrow=block;html=1;strokeWidth=2;exitX=0.1;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="t5" value="đọc file thô">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e9" edge="1" parent="1" source="t5" style="endArrow=block;html=1;strokeWidth=2;" target="dwh" value="nạp (upsert)">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="d1" edge="1" parent="1" source="src3" style="edgeStyle=orthogonalEdgeStyle;endArrow=block;html=1;strokeWidth=2;dashed=1;strokeColor=#b85450;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="deb">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="d2" edge="1" parent="1" source="deb" style="endArrow=block;html=1;strokeWidth=2;dashed=1;strokeColor=#b85450;" target="kafka">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="d3" edge="1" parent="1" source="kafka" style="endArrow=block;html=1;strokeWidth=2;dashed=1;strokeColor=#b85450;" target="cons">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="d4" edge="1" parent="1" source="cons" style="edgeStyle=orthogonalEdgeStyle;endArrow=block;html=1;strokeWidth=2;dashed=1;strokeColor=#b85450;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;" target="dwh">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="d5" edge="1" parent="1" source="zk" style="endArrow=none;html=1;strokeWidth=1;dashed=1;strokeColor=#b85450;" target="kafka">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="d6" edge="1" parent="1" source="superset" style="endArrow=block;html=1;strokeWidth=2;strokeColor=#9673a6;" target="dwh" value="truy vấn">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

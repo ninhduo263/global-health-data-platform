@@ -1,6 +1,8 @@
-# Public Health Data Platform (COVID-19 / Bệnh truyền nhiễm)
+# Public Health Data Platform & Data Mining (COVID-19 / Bệnh truyền nhiễm)
 
-Hệ thống Data Platform cục bộ chạy trên Docker Compose (Windows WSL2) phục vụ thu thập, đồng bộ CDC, lưu trữ Data Lake (MinIO), điều phối ETL (Apache Airflow), kho dữ liệu phân tích (PostgreSQL Snowflake Schema) và trực quan hóa BI (Apache Superset).
+Hệ thống Data Platform & Data Mining cục bộ chạy trên Docker Compose (Windows WSL2) phục vụ thu thập đa nguồn, đồng bộ CDC ẩn danh, lưu trữ Data Lake (MinIO), điều phối ETL & ML pipeline (Apache Airflow), kho dữ liệu phân tích (PostgreSQL Snowflake Schema), phân cụm dịch tễ K-Means nâng cao, cảnh báo sớm bùng phát dịch bằng XGBoost và trực quan hóa BI (Apache Superset).
+
+> **Tài liệu liên quan:** [Giới thiệu tổng quan hệ thống & thuật toán (GIOI_THIEU_HE_THONG.md)](./GIOI_THIEU_HE_THONG.md) | [Kịch bản bảo vệ & hỏi đáp (DEMO.md)](./DEMO.md)
 
 ## 1. Bảng ánh xạ cổng & Thông tin đăng nhập (Windows Host)
 
@@ -12,104 +14,105 @@ Hệ thống Data Platform cục bộ chạy trên Docker Compose (Windows WSL2)
 | **MinIO Console** | `minio` | `http://localhost:9001` | `minioadmin` / `minioadmin123` | Bucket mặc định: `covid19-landing-zone` |
 | **Airflow Webserver** | `airflow-webserver` | `http://localhost:8081` | `admin` / `admin` | DAG: `health_data_pipeline`; dùng cookie riêng `airflow_session` |
 | **Apache Superset** | `superset` | `http://localhost:8089` | `admin` / `admin` | SQLAlchemy URI kết nối DWH: `postgresql+psycopg2://dwh_admin:dwh_password@postgres-dwh:5432/health_dwh` |
-| **Debezium Connect** | `debezium` | `http://localhost:8083` | *(REST API)* | Đăng ký connector từ `config/debezium/register-mysql-connector.json` |
+| **Debezium Connect** | `debezium` | `http://localhost:8083` | *(REST API)* | Connector `vaccination-oltp-connector-v2` từ `config/debezium/register-mysql-connector.json` |
 | **Kafka Broker** | `kafka` | `localhost:9092` | - | Internal: `kafka:9092` |
 
 ## 2. Khởi chạy trên Windows
 
 ```powershell
-# Chạy tại thư mục global-health-data-platform
-docker compose up -d
-
+docker compose up -d --build
 docker compose ps
 ```
 
-Compose tự chạy migration DWH, đăng ký Debezium connector và bật CDC consumer. Lần chạy đầu có thể mất vài phút để tải image và khởi tạo Airflow/Superset.
-Pipeline WHO đọc `data/raw/WHO-COVID-19-global-daily-data.csv`, lọc 15 mã
-`VN,US,GB,DE,FR,IT,ES,IN,CN,JP,KR,BR,RU,AU,CA` trong giai đoạn
-`2020-01-01` đến `2023-12-31`. Mã Việt Nam trong file WHO là `VN` (ISO-2);
-OWID và CDC dùng `VNM` (ISO-3). WHO và OWID được giữ ở các fact/view riêng, không join trực tiếp bằng mã quốc gia.
-
-Airflow dùng cookie phiên riêng vì cookie trình duyệt không phân biệt port; nếu
-đã mở Airflow trước khi đổi cấu hình, hãy recreate webserver rồi mở lại
-`http://localhost:8081` trong cửa sổ ẩn danh hoặc xoá cookie của `localhost`.
+Nếu cập nhật từ database volume cũ, chạy lại migration (idempotent) và recreate Airflow / CDC consumer:
 
 ```powershell
-docker compose up -d --force-recreate airflow-webserver airflow-scheduler
-```
-
-## 3. Các luồng dữ liệu
-
-- DAG `health_data_pipeline` tải snapshot OWID để nạp dữ liệu COVID-19 ISO-3 theo quốc gia/ngày vào `dwh.fact_cases`; đồng thời lọc WHO theo danh sách quốc gia và giai đoạn cấu hình, lưu raw lên MinIO rồi nạp số liệu WHO ISO-2 vào `dwh.fact_who_covid_daily`. Hai bảng `vaccination_centers` / `vaccination_records` của MySQL cũng được lưu raw vào MinIO.
-- Nguồn OWID gồm các quốc gia và vùng lãnh thổ có mã quốc gia 3 ký tự, với các trường hợp mắc/tử vong mới, tổng lũy kế và số liệu tiêm chủng. Dữ liệu lịch sử có sẵn từ năm 2020; ngày cuối cùng phụ thuộc snapshot OWID hiện hành (không phải luồng thời gian thực).
-- Debezium phát CDC cho hai bảng MySQL vào Kafka. Connector sử dụng tài khoản replication `oltp_user` (không dùng root); quyền replication được cấp trong `scripts/sql/init-oltp.sql`. Service `cdc-consumer` tự đăng ký/cập nhật connector; connector dùng `snapshot.mode=when_needed` để chụp snapshot ban đầu hoặc chụp lại khi binlog/offset cũ không còn khả dụng (ví dụ sau khi MySQL được tạo lại), rồi tiếp tục theo dõi thay đổi. Consumer upsert/xóa dữ liệu trong `dwh.dim_vaccination_center` và `dwh.fact_vaccination`. Giao dịch được xử lý idempotent; Kafka offset chỉ được commit sau khi transaction DWH thành công.
-- Migration `scripts/sql/upgrade-dwh.sql` chạy an toàn nhiều lần và tạo các bảng CDC cùng view phục vụ BI. View cũng được tạo mới khi PostgreSQL khởi tạo volume lần đầu.
-- MySQL dùng cổng host `3307` vì host đã có dịch vụ chiếm `3306`; các container vẫn kết nối nội bộ qua cổng `3306`.
-
-## 4. Tạo dashboard Superset
-
-Compose tự động tạo database connection **Health DWH** trong Superset với PostgreSQL DWH
-(`postgres-dwh:5432/health_dwh`). Vào **Data → Databases → Health DWH → Explore** để
-kiểm tra các bảng/view trong schema `dwh`. Nếu connection đã tồn tại từ lần chạy trước,
-Compose sẽ cập nhật lại URI để tránh trỏ nhầm `localhost` hoặc database SQLite metadata.
-
-Kết nối database trong Superset bằng PostgreSQL:
-
-| Trường | Giá trị |
-|---|---|
-| Host | `postgres-dwh` |
-| Port | `5432` |
-| Database | `health_dwh` |
-| Username / Password | `dwh_admin` / `dwh_password` |
-
-Trong Superset, vào **Data → Datasets → + Dataset**, chọn database trên, schema `dwh`, rồi thêm các view:
-
-- `vw_dashboard_cases` — dữ liệu ca mắc/tử vong và tiêm chủng OWID theo ngày, quốc gia, khu vực.
-- `vw_who_covid_daily` — dữ liệu WHO theo ngày, mã ISO-2 và WHO region.
-- `vw_dashboard_vaccinations` — số lượt tiêm theo ngày, trung tâm, vaccine và số mũi.
-- `vw_weekly_covid_clusters` — kết quả K-means theo quốc gia/tuần.
-
-Task `weekly_covid_kmeans` chạy sau khi OWID được nạp vào DWH. Task tổng hợp ca mắc/tử vong theo tuần, chuẩn hóa theo dân số, rồi phân cụm theo incidence, mortality và biến động ca so với tuần trước. Mặc định có 4 cụm, cấu hình qua `COVID_KMEANS_CLUSTERS`; kết quả upsert vào `dwh.fact_weekly_covid_cluster`. `cluster_id` được sắp theo mức ca mắc trung bình trên 100.000 dân trong lần chạy. Đây là phân cụm xu hướng, không phải dự báo/cảnh báo tự động.
-
-
-Nếu database volume đã tồn tại trước khi thêm bảng phân cụm, chạy lại migration và khởi động lại Airflow để cài dependency mới:
-
-```powershell
-docker compose up -d --force-recreate dwh-migrate
+docker compose up -d --force-recreate dwh-migrate cdc-consumer airflow-webserver airflow-scheduler
 docker compose logs --tail 30 dwh-migrate
-docker compose up -d --force-recreate airflow-webserver airflow-scheduler
 ```
 
-Để tạo dashboard, thêm dataset `vw_weekly_covid_clusters`, đồng bộ cột sau lần chạy DAG đầu tiên, rồi có thể tạo:
-
-1. **Số quốc gia theo cụm và tuần:** Bar Chart, X-axis `cluster_id`, metric `COUNT_DISTINCT(country_code)`, time column `week_start`.
-2. **Incidence theo tuần:** Time-series Line Chart, X-axis `week_start`, metric `AVG(cases_per_100k)`, dimension `cluster_id`.
-3. **Chi tiết quốc gia:** Table với `week_start`, `country_code`, `country_name`, `cluster_id`, `cases_per_100k`, `deaths_per_100k`, `case_growth_pct`.
-
-Với dataset `vw_who_covid_daily`, có thể tạo line chart ca mắc mới theo ngày (X-axis `report_date`, metric `SUM(new_cases)`, dimension `who_region`) và chart tử vong mới tương tự với `SUM(new_deaths)`. WHO dùng ISO-2, nên không join trực tiếp `country_code` của view này với mã ISO-3 trong `vw_dashboard_cases`.
-
-Sau lần nạp OWID, mở dataset `vw_dashboard_cases` trong Superset và đồng bộ/refresh danh sách cột để nhận các trường mới (`new_vaccinations`, `people_fully_vaccinated`, `total_cases`, `total_deaths`). Hai chart tiêm chủng đang có trong dashboard tạo từ CDC MySQL vẫn chỉ là dữ liệu mẫu nội bộ; muốn dashboard cũng thể hiện quy mô toàn cầu thì sửa dataset của chúng sang `vw_dashboard_cases`:
-
-1. **Ca mắc theo ngày và châu lục:** Time-series Line Chart, X-axis `report_date`, metric `SUM(new_cases)`, dimension `continent_name`.
-2. **Tử vong theo ngày và châu lục:** Time-series Line Chart, X-axis `report_date`, metric `SUM(new_deaths)`, dimension `continent_name`.
-3. **Số liều tiêm mới toàn cầu theo ngày:** Time-series Line Chart, X-axis `report_date`, metric `SUM(new_vaccinations)`.
-4. **Số người đã tiêm đầy đủ theo châu lục/ngày:** Time-series Line Chart, X-axis `report_date`, metric `SUM(people_fully_vaccinated)`, dimension `continent_name`. Cộng các quốc gia trong cùng một ngày; không cộng lũy kế qua nhiều ngày.
-
-Lưu từng chart, thêm chúng vào dashboard mới rồi nhấn **Save**. Để nạp snapshot OWID toàn cầu vào DWH lần đầu hoặc làm mới thủ công, vào Airflow `http://localhost:8081`, mở DAG `health_data_pipeline` và chọn **Trigger DAG**. DAG sẽ tải lại snapshot, lưu bản thô vào MinIO và upsert idempotent theo quốc gia/ngày. Có thể kiểm tra khối lượng bằng truy vấn SQL:
-
-```sql
-SELECT COUNT(*) AS observations,
-       COUNT(DISTINCT country_code) AS countries,
-       MIN(report_date) AS first_date,
-       MAX(report_date) AS last_date
-FROM dwh.vw_dashboard_cases;
-```
-
-Luồng vaccine nội bộ MySQL là dữ liệu minh họa riêng; nó không đại diện cho tiêm chủng toàn cầu. Nếu view tiêm chủng nội bộ chưa có hàng, hãy kiểm tra trạng thái `cdc-consumer` và Debezium connector:
+Để sinh thêm vài nghìn bệnh nhân và mũi tiêm giả lập vào MySQL OLTP phục vụ biểu đồ nhân khẩu học/bệnh nền qua CDC:
 
 ```powershell
-docker compose logs --tail 50 cdc-consumer
-curl.exe http://localhost:8083/connectors/vaccination-oltp-connector/status
+python .\scripts\seed_oltp_data.py --patients 2500
 ```
 
-CDC consumer không đưa `citizen_hash` vào DWH; dashboard chỉ chứa số liệu tổng hợp. DAG lưu bản raw MySQL vào MinIO, không thay thế luồng CDC.
+## 3. Các luồng dữ liệu & mô hình Data Mining
+
+### 3.1. Batch ETL & Data Lake (`health_data_pipeline`)
+- `extract_owid_api` tải snapshot lịch sử toàn cầu OWID (ISO-3), `extract_who_csv` lọc dữ liệu WHO (15 mã ISO-2 giai đoạn `2020-01-01` đến `2023-12-31`), `extract_mysql_oltp` xuất raw 3 bảng OLTP (`vaccination_centers`, `patients` đã lược bỏ `full_name`, `vaccination_records`) lên MinIO (`covid19-landing-zone`).
+- `transform_and_load_to_dwh` nạp OWID vào `dwh.dim_region`, `dwh.dim_country`, `dwh.dim_date`, `dwh.fact_cases` và nạp WHO vào bảng riêng `dwh.fact_who_covid_daily`.
+
+### 3.2. Real-time CDC & Ẩn danh hóa dữ liệu bệnh nhân
+- Debezium connector `vaccination-oltp-connector-v2` capture 3 bảng MySQL (`vaccination_centers`, `patients`, `vaccination_records`) qua binlog vào Kafka.
+- Service `cdc-consumer` tự động xóa connector cũ (`DEBEZIUM_LEGACY_CONNECTORS`) để tránh trùng sự kiện, đồng bộ idempotent vào `dwh.dim_vaccination_center`, `dwh.dim_patient` và `dwh.fact_vaccination`.
+- **Bảo vệ quyền riêng tư (Data Minimization)**: `dwh.dim_patient` chỉ lưu `birth_year`, `gender`, `province`, `health_status`, `comorbidity`, `reported_date_id`; tuyệt đối **không** sao chép `full_name` hay `citizen_hash` sang DWH. Hỗ trợ bản ghi `is_placeholder` khi event mũi tiêm tới trước event bệnh nhân.
+
+### 3.3. Phân cụm dịch tễ K-Means nâng cao (`weekly_covid_kmeans`)
+- Đặc trưng chuẩn hóa (`StandardScaler`): `log1p(cases_per_100k)`, `log1p(deaths_per_100k)` và biến động `log` ca mắc so với tuần trước.
+- Đánh giá dải `K` (`COVID_KMEANS_K_RANGE`, mặc định `2-8`) trên 4 chỉ số: **Inertia (Elbow)**, **Silhouette** (trên mẫu tối đa 10.000 dòng), **Davies–Bouldin** và **Calinski–Harabasz**, lưu vào `dwh.fact_kmeans_evaluation`.
+- Hỗ trợ chọn `COVID_KMEANS_CLUSTERS=4` cố định hoặc `COVID_KMEANS_CLUSTERS=auto` (tự chọn `K` có Silhouette cao nhất).
+- Tự sinh hồ sơ cụm (`dwh.fact_kmeans_cluster_profile`) kèm nhãn tiếng Việt theo mức ca mắc và xu hướng tâm cụm (ví dụ: *“Cao – đang tăng”*, *“Thấp – ổn định”*) và chiếu **PCA 2 chiều** (`pca_1`, `pca_2`) trong `dwh.fact_weekly_covid_cluster`.
+
+### 3.4. Cảnh báo sớm bùng phát dịch bằng XGBoost (`covid_early_warning`)
+- Bài toán phân lớp nhị phân ở mức `(quốc gia, tuần t)`: dự đoán sau `H` tuần (`COVID_EW_HORIZON_WEEKS=2`), tỷ lệ ca mắc có tăng gấp `>= COVID_EW_SURGE_RATIO` (1.5x) và vượt ngưỡng tối thiểu `COVID_EW_MIN_CASES_PER_100K` (10 ca/100k dân) hay không.
+- Bộ 18 đặc trưng nhân quả (chỉ dùng dữ liệu `<= t`): mức ca & lag 1–3 tuần, trung bình/độ lệch chuẩn trượt 4 tuần, tốc độ tăng 1–2 tuần & gia tốc, tử vong & CFR trượt 4 tuần, độ phủ tiêm chủng `>=1` mũi & tiêm đủ (`cummax / population`), mùa vụ (`sin`/`cos` tuần trong năm), tốc độ tăng trung bình toàn cầu cùng tuần và `cluster_id` từ K-Means.
+- Chia tập train/test theo thời gian có **khoảng trống purge `H` tuần** (`train < cutoff - H`, `test >= cutoff`) để chống rò rỉ nhãn tương lai; tối ưu ngưỡng quyết định theo F1 trên tập validation; xử lý mất cân bằng lớp bằng `scale_pos_weight`.
+- So sánh 3 mô hình trên cùng tập test trong `dwh.fact_early_warning_evaluation`: **Baseline luật tăng >= 25%**, **Logistic Regression** và **XGBoost** (`xgboost-cpu`, tự fallback sang `HistGradientBoostingClassifier` nếu thiếu thư viện).
+- Xuất cảnh báo (`HIGH` / `WATCH` / `LOW`) cho tập `test` và `forecast` (`H` tuần mới nhất) vào `dwh.fact_early_warning`, cùng độ quan trọng đặc trưng vào `dwh.fact_early_warning_feature_importance`.
+
+## 4. Biến môi trường cấu hình Data Mining
+
+| Biến môi trường | Mặc định | Ý nghĩa |
+|---|---|---|
+| `COVID_KMEANS_CLUSTERS` | `4` | Số cụm K cố định hoặc `auto` (chọn theo Silhouette lớn nhất) |
+| `COVID_KMEANS_K_RANGE` | `2-8` | Khoảng giá trị K đưa vào bảng đánh giá Elbow / Silhouette |
+| `COVID_EW_HORIZON_WEEKS` | `2` | Số tuần cảnh báo sớm trước khi bùng phát (`H`) |
+| `COVID_EW_SURGE_RATIO` | `1.5` | Ngưỡng tỷ lệ tăng ca mắc sau `H` tuần (`>= 1.5` tức tăng ít nhất 50%) |
+| `COVID_EW_MIN_CASES_PER_100K` | `10` | Mức ca tối thiểu trên 100.000 dân để tính là đợt bùng phát thực sự |
+| `COVID_EW_TEST_FRACTION` | `0.2` | Tỷ lệ số tuần cuối dùng làm tập kiểm thử độc lập |
+| `COVID_EW_INCLUDE_CLUSTER` | `true` | Đưa `cluster_id` của K-Means làm đặc trưng (đặt `false` khi chạy ablation) |
+
+## 5. Khởi tạo tự động Datasets & Dashboards trên Apache Superset
+
+Thay vì thêm từng view và dựng từng biểu đồ thủ công, chạy script khởi tạo tự động qua Superset REST API (`/api/v1/...`, idempotent — chạy nhiều lần không tạo bản trùng):
+
+```powershell
+python .\scripts\init_superset_dashboards.py
+# hoặc qua PowerShell wrapper:
+.\scripts\init_superset_dashboards.ps1
+```
+
+Script tự động đăng ký, đồng bộ cột và Việt hóa nhãn hiển thị (`verbose_name`) cho toàn bộ **12 Dataset Views** trong schema `dwh`, cập nhật **21 biểu đồ** và xuất bản **4 Dashboard tiếng Việt hoàn chỉnh**:
+
+1. **Tổng quan Phân cụm Dịch tễ COVID-19 Toàn cầu (4 Nhóm Xu hướng)**  
+   `http://localhost:8089/superset/dashboard/covid19-kmeans-clusters/`
+2. **Phân tích Phân cụm Dịch tễ COVID-19 — Đánh giá Số cụm K & Hồ sơ Cụm**  
+   `http://localhost:8089/superset/dashboard/covid19-kmeans-mining/`
+   - `vw_kmeans_evaluation` — biểu đồ **Độ phân tán nội cụm theo K (Phương pháp Khuỷu tay)** và **Độ tách biệt Cụm (Silhouette & Davies–Bouldin)**.
+   - `vw_weekly_covid_clusters` — **Bản đồ Phân bố Cụm trên Không gian 2 Chiều (PCA)** và đường diễn biến ca mắc theo cụm.
+   - `vw_kmeans_cluster_profile` — biểu đồ tỉ trọng và bảng hồ sơ cụm tự sinh nhãn tiếng Việt.
+3. **Hệ thống Cảnh báo Sớm Nguy cơ Bùng phát Dịch COVID-19 (Dự báo trước 2 Tuần)**  
+   `http://localhost:8089/superset/dashboard/covid19-early-warning/`
+   - `vw_early_warning_latest` — **Bản đồ Thế giới** xác suất bùng phát 2 tuần tới, biểu đồ tỷ lệ `Nguy cơ cao / Cần theo dõi / Nguy cơ thấp` và bảng xếp hạng quốc gia.
+   - `vw_early_warning_evaluation` — đối sánh độ chính xác giữa `XGBoost (Cây tăng cường)`, `Hồi quy Logistic` và `Luật cơ sở (Tăng ≥ 25%)`.
+   - `vw_early_warning_feature_importance` — 10 yếu tố ảnh hưởng lớn nhất đến nguy cơ bùng phát dịch.
+4. **Giám sát Thời gian thực — Hồ sơ Bệnh nhân Ẩn danh & Tiêm chủng Nội bộ**  
+   `http://localhost:8089/superset/dashboard/covid19-cdc-patients-vaccination/`
+   - `vw_dashboard_patients`, `vw_dashboard_vaccinations`, `vw_vaccination_by_patient` — KPI tổng bệnh nhân/mũi tiêm, phân bố sức khỏe theo nhóm tuổi, cơ cấu bệnh nền, số lượt tiêm theo vắc-xin & độ tuổi và thống kê theo tỉnh/thành.
+
+## 6. Kiểm tra & Chạy Unit Test
+
+```powershell
+# Kiểm tra trạng thái CDC connector v2
+curl.exe http://localhost:8083/connectors/vaccination-oltp-connector-v2/status
+
+# Chạy unit test cho CDC consumer
+python -m unittest discover -s cdc -p "test_*.py" -v
+
+# Chạy unit test cho K-Means & Early Warning trong container Airflow
+docker exec -i airflow-scheduler python -m unittest discover -s /opt/airflow/tests -v
+
+# Chạy kịch bản trình diễn kết quả Data Mining từ DWH
+python .\scripts\demo_kmeans.py
+```

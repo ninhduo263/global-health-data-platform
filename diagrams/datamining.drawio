@@ -1,0 +1,211 @@
+<mxfile host="Electron" pages="3">
+  <diagram name="Hình 5.1 - DAG" id="Hình 5.1 - DAG">
+    <mxGraphModel dx="1030" dy="674" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1000" pageHeight="460" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="c2" parent="1" style="text;html=1;align=left;fontStyle=1;fontSize=15;" value="DAG: health_data_pipeline" vertex="1">
+          <mxGeometry height="30" width="400" x="40" y="10" as="geometry" />
+        </mxCell>
+        <mxCell id="c3" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fontSize=14;strokeWidth=2;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="extract_owid_api" vertex="1">
+          <mxGeometry height="50" width="220" x="40" y="60" as="geometry" />
+        </mxCell>
+        <mxCell id="c4" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fontSize=14;strokeWidth=2;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="extract_who_csv" vertex="1">
+          <mxGeometry height="50" width="220" x="40" y="150" as="geometry" />
+        </mxCell>
+        <mxCell id="c5" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fontSize=14;strokeWidth=2;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="extract_mysql_oltp" vertex="1">
+          <mxGeometry height="50" width="220" x="40" y="240" as="geometry" />
+        </mxCell>
+        <mxCell id="c6" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fontSize=14;strokeWidth=2;fillColor=#d5e8d4;strokeColor=#82b366;" value="load_to_minio" vertex="1">
+          <mxGeometry height="50" width="190" x="360" y="150" as="geometry" />
+        </mxCell>
+        <mxCell id="c7" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fontSize=14;strokeWidth=2;fillColor=#fff2cc;strokeColor=#d6b656;" value="transform_and_load_to_dwh" vertex="1">
+          <mxGeometry height="50" width="280" x="640" y="150" as="geometry" />
+        </mxCell>
+        <mxCell id="c8" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fontSize=14;strokeWidth=2;fillColor=#f8cecc;strokeColor=#b85450;" value="weekly_covid_kmeans" vertex="1">
+          <mxGeometry height="50" width="220" x="670" y="290" as="geometry" />
+        </mxCell>
+        <mxCell id="c9" edge="1" parent="1" source="c3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=2;labelBackgroundColor=#ffffff;fontSize=12;endArrow=block;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="c6" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="c10" edge="1" parent="1" source="c4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=2;labelBackgroundColor=#ffffff;fontSize=12;endArrow=block;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="c6" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="c11" edge="1" parent="1" source="c5" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=2;labelBackgroundColor=#ffffff;fontSize=12;endArrow=block;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="c6" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="c12" edge="1" parent="1" source="c6" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=2;labelBackgroundColor=#ffffff;fontSize=12;endArrow=block;" target="c7" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="c13" edge="1" parent="1" source="c7" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=2;labelBackgroundColor=#ffffff;fontSize=12;endArrow=block;" target="c8" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram name="Hình 4.1 - Snowflake" id="Hình 4.1 - Snowflake">
+    <mxGraphModel dx="1030" dy="674" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1200" pageHeight="1300" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="c2" parent="1" style="swimlane;fontStyle=1;fontSize=13;startSize=30;html=1;rounded=1;arcSize=6;fillColor=#dae8fc;strokeColor=#6c8ebf;swimlaneFillColor=#ffffff;" value="dwh.dim_region" vertex="1">
+          <mxGeometry height="116" width="240" x="60" y="40" as="geometry" />
+        </mxCell>
+        <mxCell id="c3" parent="c2" style="text;html=1;align=left;verticalAlign=top;spacingLeft=10;whiteSpace=wrap;overflow=hidden;fontFamily=Courier New;fontSize=12;" value="id (PK)&lt;br&gt;continent_code&lt;br&gt;continent_name&lt;br&gt;who_region" vertex="1">
+          <mxGeometry height="86" width="240" y="30" as="geometry" />
+        </mxCell>
+        <mxCell id="c4" parent="1" style="text;html=1;align=left;verticalAlign=middle;fontStyle=2;fontSize=12;fontColor=#666666;" value="(Chuẩn hóa cấp 2 của Snowflake)" vertex="1">
+          <mxGeometry height="24" width="230" x="310" y="42" as="geometry" />
+        </mxCell>
+        <mxCell id="c5" parent="1" style="swimlane;fontStyle=1;fontSize=13;startSize=30;html=1;rounded=1;arcSize=6;fillColor=#dae8fc;strokeColor=#6c8ebf;swimlaneFillColor=#ffffff;" value="dwh.dim_country" vertex="1">
+          <mxGeometry height="170" width="240" x="60" y="230" as="geometry" />
+        </mxCell>
+        <mxCell id="c6" parent="c5" style="text;html=1;align=left;verticalAlign=top;spacingLeft=10;whiteSpace=wrap;overflow=hidden;fontFamily=Courier New;fontSize=12;" value="id (PK)&lt;br&gt;country_code (ISO-3)&lt;br&gt;country_name&lt;br&gt;population, gdp&lt;br&gt;beds_per_1000&lt;br&gt;life_expectancy&lt;br&gt;region_id (FK)" vertex="1">
+          <mxGeometry height="140" width="240" y="30" as="geometry" />
+        </mxCell>
+        <mxCell id="c7" parent="1" style="swimlane;fontStyle=1;fontSize=13;startSize=30;html=1;rounded=1;arcSize=6;fillColor=#dae8fc;strokeColor=#6c8ebf;swimlaneFillColor=#ffffff;" value="dwh.dim_date" vertex="1">
+          <mxGeometry height="116" width="250" x="400" y="230" as="geometry" />
+        </mxCell>
+        <mxCell id="c8" parent="c7" style="text;html=1;align=left;verticalAlign=top;spacingLeft=10;whiteSpace=wrap;overflow=hidden;fontFamily=Courier New;fontSize=12;" value="date_id (PK, YYYYMMDD)&lt;br&gt;full_date&lt;br&gt;year, month, day&lt;br&gt;is_weekend" vertex="1">
+          <mxGeometry height="86" width="250" y="30" as="geometry" />
+        </mxCell>
+        <mxCell id="c9" parent="1" style="swimlane;fontStyle=1;fontSize=13;startSize=30;html=1;rounded=1;arcSize=6;fillColor=#ffe6cc;strokeColor=#d79b00;swimlaneFillColor=#ffffff;" value="dwh.fact_cases" vertex="1">
+          <mxGeometry height="206" width="520" x="100" y="520" as="geometry" />
+        </mxCell>
+        <mxCell id="c10" parent="c9" style="text;html=1;align=left;verticalAlign=top;spacingLeft=10;whiteSpace=wrap;overflow=hidden;fontFamily=Courier New;fontSize=12;" value="id (PK, BigSerial)&lt;br&gt;country_id (FK) -&amp;gt; dim_country.id&lt;br&gt;date_id (FK)    -&amp;gt; dim_date.date_id&lt;br&gt;indicator_id    -&amp;gt; dim_indicator.id&lt;br&gt;new_cases, new_deaths, new_tests&lt;br&gt;total_cases, total_deaths&lt;br&gt;total_vaccinations, new_vaccinations&lt;br&gt;people_vaccinated, people_fully_vaccinated&lt;br&gt;internal_vax_doses, internal_patients_declared" vertex="1">
+          <mxGeometry height="176" width="520" y="30" as="geometry" />
+        </mxCell>
+        <mxCell id="c11" parent="1" style="text;html=1;align=left;verticalAlign=middle;fontStyle=2;fontSize=12;fontColor=#666666;" value="(Fact trung tâm)" vertex="1">
+          <mxGeometry height="24" width="230" x="630" y="522" as="geometry" />
+        </mxCell>
+        <mxCell id="c12" parent="1" style="swimlane;fontStyle=1;fontSize=13;startSize=30;html=1;rounded=1;arcSize=6;fillColor=#dae8fc;strokeColor=#6c8ebf;swimlaneFillColor=#ffffff;" value="dwh.dim_indicator" vertex="1">
+          <mxGeometry height="98" width="220" x="760" y="560" as="geometry" />
+        </mxCell>
+        <mxCell id="c13" parent="c12" style="text;html=1;align=left;verticalAlign=top;spacingLeft=10;whiteSpace=wrap;overflow=hidden;fontFamily=Courier New;fontSize=12;" value="id (PK)&lt;br&gt;indicator_code&lt;br&gt;description" vertex="1">
+          <mxGeometry height="68" width="220" y="30" as="geometry" />
+        </mxCell>
+        <mxCell id="c14" parent="1" style="swimlane;fontStyle=1;fontSize=13;startSize=30;html=1;rounded=1;arcSize=6;fillColor=#dae8fc;strokeColor=#6c8ebf;swimlaneFillColor=#ffffff;" value="dwh.dim_vaccination_center" vertex="1">
+          <mxGeometry height="98" width="270" x="60" y="960" as="geometry" />
+        </mxCell>
+        <mxCell id="c15" parent="c14" style="text;html=1;align=left;verticalAlign=top;spacingLeft=10;whiteSpace=wrap;overflow=hidden;fontFamily=Courier New;fontSize=12;" value="id (PK)&lt;br&gt;center_code, center_name&lt;br&gt;province, country_code" vertex="1">
+          <mxGeometry height="68" width="270" y="30" as="geometry" />
+        </mxCell>
+        <mxCell id="c16" parent="1" style="swimlane;fontStyle=1;fontSize=13;startSize=30;html=1;rounded=1;arcSize=6;fillColor=#ffe6cc;strokeColor=#d79b00;swimlaneFillColor=#ffffff;" value="dwh.fact_vaccination" vertex="1">
+          <mxGeometry height="134" width="480" x="390" y="960" as="geometry" />
+        </mxCell>
+        <mxCell id="c17" parent="c16" style="text;html=1;align=left;verticalAlign=top;spacingLeft=10;whiteSpace=wrap;overflow=hidden;fontFamily=Courier New;fontSize=12;" value="record_id (PK) -&amp;gt; Khóa chính từ MySQL OLTP&lt;br&gt;center_id (FK) -&amp;gt; dim_vaccination_center.id&lt;br&gt;date_id (FK)   -&amp;gt; dim_date.date_id&lt;br&gt;vaccine_type, dose_number&lt;br&gt;updated_at" vertex="1">
+          <mxGeometry height="104" width="480" y="30" as="geometry" />
+        </mxCell>
+        <mxCell id="c18" parent="1" style="text;html=1;align=left;verticalAlign=middle;fontStyle=2;fontSize=12;fontColor=#666666;" value="(Fact Streaming CDC)" vertex="1">
+          <mxGeometry height="24" width="230" x="880" y="962" as="geometry" />
+        </mxCell>
+        <mxCell id="c19" edge="1" parent="1" source="c2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=2;labelBackgroundColor=#ffffff;fontSize=12;startArrow=ERmandOne;endArrow=ERmany;startSize=12;endSize=12;startFill=0;endFill=0;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" target="c5" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="c20" edge="1" parent="1" source="c5" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=2;labelBackgroundColor=#ffffff;fontSize=12;startArrow=ERmandOne;endArrow=ERmany;startSize=12;endSize=12;startFill=0;endFill=0;exitX=0.5;exitY=1;entryX=0.1538;entryY=0;" target="c9" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="c21" edge="1" parent="1" source="c7" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=2;labelBackgroundColor=#ffffff;fontSize=12;startArrow=ERmandOne;endArrow=ERmany;startSize=12;endSize=12;startFill=0;endFill=0;exitX=0.5;exitY=1;entryX=0.8173;entryY=0;" target="c9" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="c22" edge="1" parent="1" source="c12" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=2;labelBackgroundColor=#ffffff;fontSize=12;startArrow=ERmandOne;endArrow=ERmany;startSize=12;endSize=12;startFill=0;endFill=0;exitX=0;exitY=0.5;entryX=1;entryY=0.4;" target="c9" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="c23" edge="1" parent="1" source="c14" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=2;labelBackgroundColor=#ffffff;fontSize=12;startArrow=ERmandOne;endArrow=ERmany;startSize=12;endSize=12;startFill=0;endFill=0;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="c16" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="c24" edge="1" parent="1" source="c7" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=2;labelBackgroundColor=#ffffff;fontSize=12;startArrow=ERmandOne;endArrow=ERmany;startSize=12;endSize=12;startFill=0;endFill=0;exitX=1;exitY=0.5;entryX=1;entryY=0.5;" target="c16" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1080" y="300" />
+              <mxPoint x="1080" y="1045" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram name="Hình 2.1 - Kiến trúc" id="Hình 2.1 - Kiến trúc">
+    <mxGraphModel dx="1304" dy="853" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1100" pageHeight="1050" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="c2" parent="1" style="rounded=1;whiteSpace=wrap;html=1;verticalAlign=top;align=left;spacingLeft=14;spacingTop=4;fontStyle=1;fontSize=13;strokeWidth=2;dashed=1;fillColor=#f5f5f5;strokeColor=#666666;fontFamily=Lora;" value="TẦNG NGUỒN DỮ LIỆU" vertex="1">
+          <mxGeometry height="120" width="1020" x="40" y="30" as="geometry" />
+        </mxCell>
+        <mxCell id="c3" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fontSize=13;strokeWidth=2;fillColor=#dae8fc;strokeColor=#6c8ebf;fontFamily=Lora;" value="Nguồn 1: OWID REST API" vertex="1">
+          <mxGeometry height="55" width="270" x="80" y="80" as="geometry" />
+        </mxCell>
+        <mxCell id="c4" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fontSize=13;strokeWidth=2;fillColor=#dae8fc;strokeColor=#6c8ebf;fontFamily=Lora;" value="Nguồn 2: WHO Health CSV" vertex="1">
+          <mxGeometry height="55" width="270" x="415" y="80" as="geometry" />
+        </mxCell>
+        <mxCell id="c5" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fontSize=13;strokeWidth=2;fillColor=#dae8fc;strokeColor=#6c8ebf;fontFamily=Lora;" value="Nguồn 3: MySQL OLTP" vertex="1">
+          <mxGeometry height="55" width="270" x="750" y="80" as="geometry" />
+        </mxCell>
+        <mxCell id="c6" parent="1" style="rounded=1;whiteSpace=wrap;html=1;verticalAlign=top;align=left;spacingLeft=14;spacingTop=4;fontStyle=1;fontSize=13;strokeWidth=2;dashed=1;fillColor=#fff2cc;strokeColor=#d6b656;fontFamily=Lora;" value="TẦNG ĐIỀU PHỐI (ORCHESTRATION)" vertex="1">
+          <mxGeometry height="130" width="640" x="40" y="220" as="geometry" />
+        </mxCell>
+        <mxCell id="c7" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fontSize=13;strokeWidth=2;fillColor=#ffffff;strokeColor=#d6b656;fontFamily=Lora;" value="Apache Airflow (LocalExecutor)&lt;br&gt;DAG: health_data_pipeline (Extract → Load)" vertex="1">
+          <mxGeometry height="60" width="480" x="120" y="270" as="geometry" />
+        </mxCell>
+        <mxCell id="c8" parent="1" style="rounded=1;whiteSpace=wrap;html=1;verticalAlign=top;align=left;spacingLeft=14;spacingTop=4;fontStyle=1;fontSize=13;strokeWidth=2;dashed=1;fillColor=#d5e8d4;strokeColor=#82b366;fontFamily=Lora;" value="TẦNG DATA LAKE (LANDING ZONE)" vertex="1">
+          <mxGeometry height="130" width="640" x="40" y="410" as="geometry" />
+        </mxCell>
+        <mxCell id="c9" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fontSize=13;strokeWidth=2;fillColor=#ffffff;strokeColor=#82b366;fontFamily=Lora;" value="MinIO Object Storage (S3 API)&lt;br&gt;Bucket: covid19-landing-zone (raw/...)" vertex="1">
+          <mxGeometry height="60" width="480" x="120" y="460" as="geometry" />
+        </mxCell>
+        <mxCell id="c10" parent="1" style="rounded=1;whiteSpace=wrap;html=1;verticalAlign=top;align=left;spacingLeft=14;spacingTop=4;fontStyle=1;fontSize=13;strokeWidth=2;dashed=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontFamily=Lora;" value="TẦNG STREAMING" vertex="1">
+          <mxGeometry height="320" width="320" x="740" y="220" as="geometry" />
+        </mxCell>
+        <mxCell id="c11" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fontSize=13;strokeWidth=2;fillColor=#ffffff;strokeColor=#9673a6;fontFamily=Lora;" value="Debezium CDC Connect" vertex="1">
+          <mxGeometry height="50" width="240" x="780" y="270" as="geometry" />
+        </mxCell>
+        <mxCell id="c12" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fontSize=13;strokeWidth=2;fillColor=#ffffff;strokeColor=#9673a6;fontFamily=Lora;" value="Apache Kafka" vertex="1">
+          <mxGeometry height="50" width="240" x="780" y="360" as="geometry" />
+        </mxCell>
+        <mxCell id="c13" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fontSize=13;strokeWidth=2;fillColor=#ffffff;strokeColor=#9673a6;fontFamily=Lora;" value="CDC Consumer" vertex="1">
+          <mxGeometry height="50" width="240" x="780" y="450" as="geometry" />
+        </mxCell>
+        <mxCell id="c14" parent="1" style="rounded=1;whiteSpace=wrap;html=1;verticalAlign=top;align=left;spacingLeft=14;spacingTop=4;fontStyle=1;fontSize=13;strokeWidth=2;dashed=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontFamily=Lora;" value="TẦNG KHO DỮ LIỆU (DATA WAREHOUSE)" vertex="1">
+          <mxGeometry height="150" width="1020" x="40" y="620" as="geometry" />
+        </mxCell>
+        <mxCell id="c15" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fontSize=13;strokeWidth=2;fillColor=#ffffff;strokeColor=#d79b00;fontFamily=Lora;" value="PostgreSQL 15 (Snowflake Schema: dwh)&lt;br&gt;dim_region | dim_country | dim_date | dim_indicator | dim_vaccination_center&lt;br&gt;fact_cases | fact_vaccination | vw_weekly_covid_clusters (K-Means)" vertex="1">
+          <mxGeometry height="80" width="920" x="90" y="665" as="geometry" />
+        </mxCell>
+        <mxCell id="c16" parent="1" style="rounded=1;whiteSpace=wrap;html=1;verticalAlign=top;align=left;spacingLeft=14;spacingTop=4;fontStyle=1;fontSize=13;strokeWidth=2;dashed=1;fillColor=#f8cecc;strokeColor=#b85450;fontFamily=Lora;" value="TẦNG TRỰC QUAN HÓA (BUSINESS INTELLIGENCE)" vertex="1">
+          <mxGeometry height="120" width="1020" x="40" y="830" as="geometry" />
+        </mxCell>
+        <mxCell id="c17" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fontSize=13;strokeWidth=2;fillColor=#ffffff;strokeColor=#b85450;fontFamily=Lora;" value="Apache Superset&lt;br&gt;Dashboard: Giám sát Ca bệnh, Tiêm chủng &amp; Phân cụm" vertex="1">
+          <mxGeometry height="60" width="520" x="290" y="875" as="geometry" />
+        </mxCell>
+        <mxCell id="c18" edge="1" parent="1" source="c3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=2;labelBackgroundColor=#ffffff;fontSize=12;endArrow=block;exitX=0.5;exitY=1;entryX=0.198;entryY=0;fontFamily=Lora;" target="c7" value="(HTTP Request)">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="c19" edge="1" parent="1" source="c4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=2;labelBackgroundColor=#ffffff;fontSize=12;endArrow=block;exitX=0.5;exitY=1;entryX=0.896;entryY=0;fontFamily=Lora;" target="c7" value="(File System)">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="c20" edge="1" parent="1" source="c5" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=2;labelBackgroundColor=#ffffff;fontSize=12;endArrow=block;exitX=0.5;exitY=1;entryX=0.4375;entryY=0;fontFamily=Lora;" target="c11" value="(Binlog ROW)">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="c21" edge="1" parent="1" source="c7" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=2;labelBackgroundColor=#ffffff;fontSize=12;endArrow=block;exitX=0.5;exitY=1;entryX=0.5;entryY=0;fontFamily=Lora;" target="c9" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="c22" edge="1" parent="1" source="c9" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=2;labelBackgroundColor=#ffffff;fontSize=12;endArrow=block;exitX=0.5;exitY=1;entryX=0.293;entryY=0;fontFamily=Lora;" target="c15" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="c23" edge="1" parent="1" source="c11" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=2;labelBackgroundColor=#ffffff;fontSize=12;endArrow=block;fontFamily=Lora;" target="c12" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="c24" edge="1" parent="1" source="c12" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=2;labelBackgroundColor=#ffffff;fontSize=12;endArrow=block;fontFamily=Lora;" target="c13" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="c25" edge="1" parent="1" source="c13" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=2;labelBackgroundColor=#ffffff;fontSize=12;endArrow=block;exitX=0.5;exitY=1;entryX=0.88;entryY=0;fontFamily=Lora;" target="c15" value="Upsert">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="c26" edge="1" parent="1" source="c15" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=2;labelBackgroundColor=#ffffff;fontSize=12;endArrow=block;exitX=0.5;exitY=1;entryX=0.5;entryY=0;fontFamily=Lora;" target="c17" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

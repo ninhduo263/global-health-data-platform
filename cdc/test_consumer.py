@@ -10,7 +10,9 @@ from unittest.mock import patch
 sys.modules.setdefault("psycopg2", types.SimpleNamespace(OperationalError=OSError))
 sys.modules.setdefault(
     "requests",
-    types.SimpleNamespace(get=None, post=None, put=None, RequestException=Exception),
+    types.SimpleNamespace(
+        get=None, post=None, put=None, delete=None, RequestException=Exception
+    ),
 )
 sys.modules.setdefault("kafka", types.SimpleNamespace(KafkaConsumer=object))
 
@@ -56,10 +58,11 @@ class ConsumerTests(unittest.TestCase):
         connector_config = {
             "database.user": "oltp_user",
             "database.password": "oltp_password",
-            "database.server.id": "184054",
+            "database.server.id": "184055",
             "database.include.list": "vaccination_oltp",
             "table.include.list": (
                 "vaccination_oltp.vaccination_centers,"
+                "vaccination_oltp.patients,"
                 "vaccination_oltp.vaccination_records"
             ),
         }
@@ -69,12 +72,12 @@ class ConsumerTests(unittest.TestCase):
         }
 
         class Response:
-            status_code = 200
             ok = True
             text = ""
 
-            def __init__(self, payload):
+            def __init__(self, payload, status_code=200):
                 self.payload = payload
+                self.status_code = status_code
 
             def json(self):
                 return self.payload
@@ -102,6 +105,9 @@ class ConsumerTests(unittest.TestCase):
                 current_config.update(json)
                 return Response(json)
 
+            def delete(url, timeout):
+                return Response({}, status_code=404)
+
             with (
                 patch.object(consumer, "CONNECTOR_CONFIG_PATH", config_path),
                 patch.object(consumer, "MYSQL_CDC_USER", "oltp_user"),
@@ -110,11 +116,44 @@ class ConsumerTests(unittest.TestCase):
                 patch.object(
                     consumer.requests, "put", side_effect=put, create=True
                 ) as put_mock,
+                patch.object(
+                    consumer.requests, "delete", side_effect=delete, create=True
+                ),
                 patch.object(consumer.time, "sleep"),
             ):
                 consumer.ensure_connector()
 
         self.assertEqual(put_mock.call_count, 1)
+        self.assertIn("vaccination_oltp.patients", current_config["table.include.list"])
+
+    def test_legacy_connector_is_removed_but_current_one_is_kept(self):
+        class Response:
+            def __init__(self, status_code):
+                self.status_code = status_code
+
+            def raise_for_status(self):
+                return None
+
+        with (
+            patch.object(consumer, "CONNECTOR_NAME", "vaccination-oltp-connector-v2"),
+            patch.object(
+                consumer,
+                "LEGACY_CONNECTOR_NAMES",
+                ("vaccination-oltp-connector", "vaccination-oltp-connector-v2"),
+            ),
+            patch.object(
+                consumer.requests,
+                "delete",
+                return_value=Response(204),
+                create=True,
+            ) as delete_mock,
+        ):
+            consumer.remove_legacy_connectors()
+
+        self.assertEqual(delete_mock.call_count, 1)
+        self.assertTrue(
+            delete_mock.call_args.args[0].endswith("/connectors/vaccination-oltp-connector")
+        )
 
     def test_decode_debezium_payload_and_key(self):
         self.assertEqual(
@@ -166,6 +205,93 @@ class ConsumerTests(unittest.TestCase):
             any("INSERT INTO dwh.dim_vaccination_center" in s for s in statements)
         )
         self.assertFalse(any("citizen_hash" in s for s in statements))
+
+    def test_patient_snapshot_is_anonymized_in_dwh(self):
+        connection = FakeConnection()
+        row = {
+            "patient_id": 5,
+            "citizen_hash": "a1b2c3d4e5f60005",
+            "full_name": "Hoang Thu Ha",
+            "birth_year": 1998,
+            "gender": "F",
+            "province": "Đà Nẵng",
+            "country_code": "VNM",
+            "health_status": "RECOVERED",
+            "comorbidity": "None",
+            "reported_date": 18856,
+        }
+
+        consumer.apply_event(
+            connection,
+            "health_cdc.vaccination_oltp.patients",
+            debezium_json({"patient_id": 5}),
+            debezium_json(
+                {"op": "r", "source": {"table": "patients"}, "after": row}
+            ),
+        )
+
+        patient_inserts = [
+            (statement, parameters)
+            for statement, parameters in connection.fake_cursor.statements
+            if "INSERT INTO dwh.dim_patient" in statement
+        ]
+        self.assertEqual(connection.commits, 1)
+        self.assertEqual(len(patient_inserts), 1)
+        statement, parameters = patient_inserts[0]
+        self.assertNotIn("full_name", statement)
+        self.assertNotIn("citizen_hash", statement)
+        self.assertNotIn("Hoang Thu Ha", parameters)
+        self.assertNotIn("a1b2c3d4e5f60005", parameters)
+        self.assertEqual(parameters[0], 5)
+        self.assertEqual(parameters[-1], 20210817)
+
+    def test_patient_delete_uses_key_when_before_image_is_missing(self):
+        connection = FakeConnection()
+
+        consumer.apply_event(
+            connection,
+            "health_cdc.vaccination_oltp.patients",
+            debezium_json({"patient_id": 9}),
+            debezium_json({"op": "d", "source": {"table": "patients"}, "before": None}),
+        )
+
+        statement, parameters = connection.fake_cursor.statements[0]
+        self.assertIn("DELETE FROM dwh.dim_patient", statement)
+        self.assertEqual(parameters, (9,))
+
+    def test_record_links_patient_and_creates_placeholder(self):
+        connection = FakeConnection()
+        row = {
+            "record_id": 43,
+            "patient_id": 5,
+            "center_id": 1,
+            "vaccine_type": "Moderna",
+            "dose_number": 2,
+            "vaccination_date": 18854,
+        }
+
+        consumer.apply_event(
+            connection,
+            "health_cdc.vaccination_oltp.vaccination_records",
+            debezium_json({"record_id": 43}),
+            debezium_json(
+                {"op": "c", "source": {"table": "vaccination_records"}, "after": row}
+            ),
+        )
+
+        statements = connection.fake_cursor.statements
+        placeholder = [
+            parameters
+            for statement, parameters in statements
+            if "INSERT INTO dwh.dim_patient" in statement
+        ]
+        fact = [
+            parameters
+            for statement, parameters in statements
+            if "INSERT INTO dwh.fact_vaccination" in statement
+        ]
+        self.assertEqual(placeholder, [(5,)])
+        self.assertEqual(fact[0][:3], (43, 1, 5))
 
     def test_center_delete_uses_primary_key_when_before_image_is_missing(self):
         connection = FakeConnection()

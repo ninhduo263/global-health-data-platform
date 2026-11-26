@@ -14,6 +14,7 @@ Hệ thống Data Platform & Data Mining cục bộ chạy trên Docker Compose 
 | **MinIO Console** | `minio` | `http://localhost:9001` | `minioadmin` / `minioadmin123` | Bucket mặc định: `covid19-landing-zone` |
 | **Airflow Webserver** | `airflow-webserver` | `http://localhost:8081` | `admin` / `admin` | DAG: `health_data_pipeline`; dùng cookie riêng `airflow_session` |
 | **Apache Superset** | `superset` | `http://localhost:8089` | `admin` / `admin` | SQLAlchemy URI kết nối DWH: `postgresql+psycopg2://dwh_admin:dwh_password@postgres-dwh:5432/health_dwh` |
+| **AI Interactive Portal** | `ai-portal` | `http://localhost:8501` | *(Mở trực tiếp)* | Cổng Streamlit: Mô phỏng What-If XGBoost + TreeSHAP, Tra cứu Apriori, Markov $P^k$ & Cảnh báo ổ dịch Realtime |
 | **Debezium Connect** | `debezium` | `http://localhost:8083` | *(REST API)* | Connector `vaccination-oltp-connector-v2` từ `config/debezium/register-mysql-connector.json` |
 | **Kafka Broker** | `kafka` | `localhost:9092` | - | Internal: `kafka:9092` |
 

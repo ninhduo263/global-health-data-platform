@@ -1029,6 +1029,7 @@ def early_warning_callable(**context) -> None:
                     p["alert_level"],
                     p["actual_surge"],
                     p["future_cases_per_100k"],
+                    p.get("top_reasons_vi"),
                 )
                 for p in ew_result["predictions"]
             ]
@@ -1040,7 +1041,7 @@ def early_warning_callable(**context) -> None:
                         week_start, country_code, country_name, model_version, model_name,
                         horizon_weeks, prediction_split, cases_per_100k, case_growth_pct,
                         cluster_id, surge_probability, decision_threshold, predicted_surge,
-                        alert_level, actual_surge, future_cases_per_100k
+                        alert_level, actual_surge, future_cases_per_100k, top_reasons_vi
                     ) VALUES %s
                     """,
                     pred_values,
@@ -1111,6 +1112,30 @@ def early_warning_callable(**context) -> None:
                 )
 
         conn.commit()
+
+        # Lưu artifact mô hình XGBoost đã huấn luyện phục vụ mô phỏng What-If trên AI Portal
+        try:
+            import pickle
+
+            model_dir = Path("/opt/airflow/data/models")
+            model_dir.mkdir(parents=True, exist_ok=True)
+            artifact_path = model_dir / "early_warning_model.pkl"
+            with artifact_path.open("wb") as f:
+                pickle.dump(
+                    {
+                        "model_name": ew_result["primary_model_name"],
+                        "estimator": ew_result["primary_estimator"],
+                        "decision_threshold": ew_result["decision_threshold"],
+                        "feature_cols": ew_result["feature_cols"],
+                        "horizon_weeks": horizon_weeks,
+                        "model_version": model_version,
+                    },
+                    f,
+                )
+            logger.info("Saved trained early-warning model artifact to %s", artifact_path)
+        except Exception as exc:
+            logger.warning("Could not persist early-warning model artifact: %s", exc)
+
         logger.info(
             "Persisted %s early-warning rows (primary=%s, cutoff=%s) for model_version=%s",
             len(pred_values),
@@ -1247,6 +1272,100 @@ def mine_patient_rules_callable(**context) -> None:
         conn.close()
 
 
+def anomaly_detection_callable(**context) -> None:
+    """Detect epidemiological weekly anomalies via Isolation Forest and persist to DWH."""
+    import psycopg2
+    from psycopg2.extras import execute_values
+
+    from covid_anomaly_detection import detect_weekly_anomalies
+
+    contamination = float(os.getenv("COVID_ANOMALY_CONTAMINATION", "0.02"))
+    model_version = os.getenv("COVID_ANOMALY_MODEL_VERSION", "iforest-v1")
+
+    conn = psycopg2.connect(
+        host=DWH_HOST,
+        port=DWH_PORT,
+        dbname=DWH_DB,
+        user=DWH_USER,
+        password=DWH_PASSWORD,
+    )
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    week_start,
+                    country_code,
+                    country_name,
+                    cases_per_100k::double precision,
+                    deaths_per_100k::double precision,
+                    case_growth_pct::double precision
+                FROM dwh.fact_weekly_covid_cluster
+                WHERE model_version = 'weekly-kmeans-v1'
+                ORDER BY week_start, country_code
+                """
+            )
+            cols = (
+                "week_start",
+                "country_code",
+                "country_name",
+                "cases_per_100k",
+                "deaths_per_100k",
+                "case_growth_pct",
+            )
+            weekly_rows = [dict(zip(cols, row)) for row in cur.fetchall()]
+            if not weekly_rows:
+                raise ValueError("No weekly cluster rows found for Isolation Forest anomaly detection")
+
+            anomalies = detect_weekly_anomalies(
+                weekly_rows,
+                contamination=contamination,
+            )
+
+            cur.execute(
+                "DELETE FROM dwh.fact_covid_anomalies WHERE model_version = %s",
+                (model_version,),
+            )
+            if anomalies:
+                anom_values = [
+                    (
+                        model_version,
+                        a["week_start"],
+                        a["country_code"],
+                        a["country_name"],
+                        a["cases_per_100k"],
+                        a["deaths_per_100k"],
+                        a["case_growth_pct"],
+                        a["case_z_score"],
+                        a["death_z_score"],
+                        a["anomaly_score"],
+                        a["anomaly_type_vi"],
+                        a["explanation_vi"],
+                    )
+                    for a in anomalies
+                ]
+                execute_values(
+                    cur,
+                    """
+                    INSERT INTO dwh.fact_covid_anomalies (
+                        model_version, week_start, country_code, country_name,
+                        cases_per_100k, deaths_per_100k, case_growth_pct,
+                        case_z_score, death_z_score, anomaly_score,
+                        anomaly_type_vi, explanation_vi
+                    ) VALUES %s
+                    """,
+                    anom_values,
+                    page_size=1000,
+                )
+        conn.commit()
+        logger.info("Persisted %s Isolation Forest anomalies into dwh.fact_covid_anomalies", len(anomalies))
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 # ============================================================================
 # KHỞI TẠO ĐỐI TƯỢNG DAG
 # ============================================================================
@@ -1333,5 +1452,18 @@ with DAG(
         ),
     )
 
+    covid_anomaly_detection = PythonOperator(
+        task_id="covid_anomaly_detection",
+        python_callable=anomaly_detection_callable,
+        doc_md=(
+            "Phát hiện điểm bất thường dịch tễ và nhiễu báo cáo bằng Isolation Forest "
+            "trên 56.477 quan sát tuần–quốc gia."
+        ),
+    )
+
     [extract_owid_api, extract_who_csv, extract_mysql_oltp] >> load_to_minio >> transform_and_load_to_dwh
-    transform_and_load_to_dwh >> weekly_covid_kmeans >> [covid_early_warning, patient_association_rules]
+    transform_and_load_to_dwh >> weekly_covid_kmeans >> [
+        covid_early_warning,
+        patient_association_rules,
+        covid_anomaly_detection,
+    ]

@@ -337,6 +337,34 @@ services:
     networks:
       - health_data_network
 
+  # ==========================================================================
+  # 7. INTERACTIVE AI PORTAL: Streamlit (What-If XGBoost + TreeSHAP + Realtime Alerts)
+  # ==========================================================================
+  ai-portal:
+    build:
+      context: ./portal
+    container_name: ai-portal
+    restart: unless-stopped
+    ports:
+      - "8501:8501"
+    environment:
+      DWH_HOST: postgres-dwh
+      DWH_PORT: "5432"
+      DWH_DB: ${POSTGRES_DB:-health_dwh}
+      DWH_USER: ${POSTGRES_USER:-dwh_admin}
+      DWH_PASSWORD: ${POSTGRES_PASSWORD:-dwh_password}
+      EARLY_WARNING_MODEL_PATH: /app/data/models/early_warning_model.pkl
+    volumes:
+      - ./data:/app/data:ro
+      - ./portal/app.py:/app/app.py:ro
+    depends_on:
+      postgres-dwh:
+        condition: service_healthy
+      dwh-migrate:
+        condition: service_completed_successfully
+    networks:
+      - health_data_network
+
 # ============================================================================
 # NETWORKS & PERSISTENT VOLUMES
 networks:

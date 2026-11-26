@@ -1,0 +1,7 @@
+streamlit==1.40.1
+plotly==5.24.1
+psycopg2-binary>=2.9.9
+pandas>=2.1.0
+numpy>=1.26.0
+scikit-learn==1.5.2
+xgboost-cpu==2.1.4

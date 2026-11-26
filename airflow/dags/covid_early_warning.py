@@ -19,12 +19,36 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
 try:
+    import xgboost as xgb
     from xgboost import XGBClassifier
 
     HAS_XGBOOST = True
 except Exception:  # pragma: no cover - fallback when xgboost wheel is unavailable
+    xgb = None
     XGBClassifier = None
     HAS_XGBOOST = False
+
+
+FEATURE_LABELS_VI = {
+    "log_cases_per_100k": "Mức ca mắc hiện tại",
+    "log_cases_lag_1": "Ca mắc trễ 1 tuần",
+    "log_cases_lag_2": "Ca mắc trễ 2 tuần",
+    "log_cases_lag_3": "Ca mắc trễ 3 tuần",
+    "cases_roll4_mean": "TB ca mắc 4 tuần",
+    "cases_roll4_std": "Độ biến động 4 tuần",
+    "growth_1w": "Tốc độ tăng 1 tuần",
+    "growth_2w": "Tốc độ tăng 2 tuần",
+    "growth_accel": "Gia tốc lây nhiễm",
+    "log_deaths_per_100k": "Mức tử vong hiện tại",
+    "death_growth_1w": "Tăng trưởng tử vong",
+    "cfr_roll4": "Tỷ lệ tử vong/ca (CFR)",
+    "vax_any_pct": "Độ phủ tiêm ≥1 mũi",
+    "vax_full_pct": "Độ phủ tiêm đủ liều",
+    "week_sin": "Mùa vụ (Sin tuần)",
+    "week_cos": "Mùa vụ (Cos tuần)",
+    "global_mean_growth_1w": "Xu hướng tăng toàn cầu",
+    "cluster_id": "Nhóm cụm K-Means",
+}
 
 
 BASE_FEATURE_COLUMNS = (
@@ -542,6 +566,53 @@ def _classify_alert_level(prob: float, threshold: float) -> str:
     return "LOW"
 
 
+def compute_local_shap_reasons(
+    estimator,
+    X: np.ndarray,
+    feature_cols: list[str],
+    top_n: int = 3,
+) -> list[str]:
+    """
+    Compute exact per-row TreeSHAP contributions via XGBoost's native `pred_contribs=True`
+    (zero extra dependency) and format top driving factors in Vietnamese.
+    """
+    n_rows = int(X.shape[0])
+    if n_rows == 0:
+        return []
+
+    contribs = None
+    if HAS_XGBOOST and xgb is not None and hasattr(estimator, "get_booster"):
+        try:
+            dmat = xgb.DMatrix(X, feature_names=feature_cols)
+            raw_c = estimator.get_booster().predict(dmat, pred_contribs=True)
+            # Cột cuối là bias term, lấy len(feature_cols) cột đầu
+            contribs = np.asarray(raw_c[:, : len(feature_cols)], dtype=float)
+        except Exception:
+            contribs = None
+
+    if contribs is None:
+        return ["Dự báo dựa trên tổ hợp động lượng ca mắc, tử vong và vắc-xin"] * n_rows
+
+    reasons = []
+    for row_c in contribs:
+        top_idx = sorted(
+            range(len(feature_cols)),
+            key=lambda idx: abs(float(row_c[idx])),
+            reverse=True,
+        )[:top_n]
+        parts = []
+        for idx in top_idx:
+            val = float(row_c[idx])
+            if abs(val) < 1e-4:
+                continue
+            fname = FEATURE_LABELS_VI.get(feature_cols[idx], feature_cols[idx])
+            direction = "tăng rủi ro" if val > 0 else "giảm rủi ro"
+            parts.append(f"{fname} ({direction} {val:+.2f})")
+        reasons.append("; ".join(parts) if parts else "Trạng thái ổn định theo nền lịch sử")
+
+    return reasons
+
+
 def predict_alerts(
     estimator,
     model_name: str,
@@ -550,16 +621,17 @@ def predict_alerts(
     feature_cols: list[str],
     horizon_weeks: int,
 ) -> list[dict]:
-    """Generate alert predictions for test (backtest) and forecast (live horizon) splits."""
+    """Generate alert predictions with per-row TreeSHAP explanations for test and forecast splits."""
     if target_df.empty:
         return []
 
     X = target_df[feature_cols].to_numpy(dtype=float)
     probs = np.clip(estimator.predict_proba(X)[:, 1], 0.0, 1.0)
+    local_reasons = compute_local_shap_reasons(estimator, X, feature_cols, top_n=3)
     thresh = float(threshold)
 
     alerts = []
-    for row, prob_val in zip(target_df.itertuples(index=False), probs):
+    for row, prob_val, reason_vi in zip(target_df.itertuples(index=False), probs, local_reasons):
         prob = float(prob_val)
         pred_surge = bool(prob >= thresh)
         split_name = str(row.prediction_split)
@@ -595,6 +667,7 @@ def predict_alerts(
                 "alert_level": _classify_alert_level(prob, thresh),
                 "actual_surge": actual,
                 "future_cases_per_100k": fut_rate,
+                "top_reasons_vi": reason_vi,
             }
         )
 
@@ -721,6 +794,9 @@ def run_early_warning_pipeline(
 
     return {
         "primary_model_name": primary_name,
+        "primary_estimator": primary_model,
+        "decision_threshold": float(primary_thresh),
+        "feature_cols": feature_cols,
         "cutoff_week": cutoff,
         "predictions": predictions,
         "evaluations": evaluations,

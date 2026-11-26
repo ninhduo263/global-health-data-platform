@@ -61,6 +61,8 @@ ALL_DWH_VIEWS = [
     ("vw_early_warning_evaluation", None),
     ("vw_early_warning_feature_importance", None),
     ("vw_patient_association_rules", None),
+    ("vw_covid_anomalies", "week_start"),
+    ("vw_realtime_anomalies", "detected_at"),
 ]
 
 DATASET_COLUMN_PUT_KEYS = {
@@ -216,6 +218,21 @@ COLUMN_VERBOSE_NAMES = {
     "leverage": "Độ đòn bẩy (Leverage)",
     "conviction": "Độ thuyết phục (Conviction)",
     "target_category_vi": "Nhóm kết cục sức khỏe",
+    "top_reasons_vi": "Giải thích TreeSHAP (3 yếu tố chính)",
+    # Phát hiện Bất thường (Isolation Forest + Kafka Realtime)
+    "case_z_score": "Z-Score ca mắc",
+    "death_z_score": "Z-Score tử vong",
+    "anomaly_score": "Điểm bất thường (Isolation Forest)",
+    "anomaly_type_vi": "Phân loại bất thường",
+    "explanation_vi": "Diễn giải bất thường",
+    "alert_id": "Mã cảnh báo Realtime",
+    "detected_at": "Thời điểm phát hiện",
+    "window_seconds": "Cửa sổ thời gian (giây)",
+    "confirmed_count": "Số ca dương tính trong cửa sổ",
+    "baseline_avg": "Nền TB các tỉnh khác",
+    "z_score": "Chỉ số Z-Score",
+    "severity_vi": "Mức độ khẩn cấp",
+    "alert_message_vi": "Nội dung cảnh báo ổ dịch",
 }
 
 
@@ -1081,6 +1098,7 @@ def provision_early_warning_dashboard(
     latest_id = ds["vw_early_warning_latest"]["id"]
     eval_id = ds["vw_early_warning_evaluation"]["id"]
     imp_id = ds["vw_early_warning_feature_importance"]["id"]
+    anom_id = ds["vw_covid_anomalies"]["id"]
 
     # 1. World Map xác suất bùng phát dịch
     c_map = client.upsert_chart(
@@ -1213,7 +1231,7 @@ def provision_early_warning_dashboard(
         dataset_id=latest_id,
         params={
             "query_mode": "aggregate",
-            "groupby": ["country_code", "country_name", "week_start", "alert_level_vi"],
+            "groupby": ["country_code", "country_name", "week_start", "alert_level_vi", "top_reasons_vi"],
             "metrics": latest_metrics,
             "order_desc": True,
             "row_limit": 100,
@@ -1222,37 +1240,59 @@ def provision_early_warning_dashboard(
         },
         query_context=make_table_query_context(
             latest_id,
-            ["country_code", "country_name", "week_start", "alert_level_vi"],
+            ["country_code", "country_name", "week_start", "alert_level_vi", "top_reasons_vi"],
             latest_metrics,
             orderby=[[m_prob, False]],
             row_limit=100,
         ),
-        description="Danh sách các quốc gia sắp xếp theo xác suất bùng phát dịch trong 2 tuần tới từ cao xuống thấp.",
+        description="Danh sách các quốc gia sắp xếp theo xác suất bùng phát dịch kèm giải thích cục bộ TreeSHAP.",
         existing_charts=existing_charts,
     )
 
-    charts = [c_map, c_alert_pie, c_model_cmp, c_feat_imp, c_alert_table]
-    title = "Hệ thống Cảnh báo Sớm Nguy cơ Bùng phát Dịch COVID-19 (Dự báo trước 2 Tuần)"
+    # 6. Phân loại điểm bất thường dịch tễ phát hiện bởi Isolation Forest
+    m_anom_cnt = sql_metric("COUNT(*)", "Số tuần bất thường")
+    c_anom_pie = client.upsert_chart(
+        slice_name="Phân loại Tuần Bất thường Dịch tễ Toàn cầu (Isolation Forest)",
+        viz_type="pie",
+        dataset_id=anom_id,
+        params={
+            "groupby": ["anomaly_type_vi"],
+            "metric": m_anom_cnt,
+            "donut": True,
+            "show_legend": True,
+            "show_labels": True,
+            "number_format": ",d",
+            "adhoc_filters": [],
+            "row_limit": 10,
+            "color_scheme": "supersetColors",
+        },
+        query_context=make_pie_query_context(anom_id, ["anomaly_type_vi"], m_anom_cnt),
+        description="Phân loại các điểm dị thường do Isolation Forest phát hiện trên 56.477 tuần–quốc gia.",
+        existing_charts=existing_charts,
+    )
+
+    charts = [c_map, c_alert_pie, c_model_cmp, c_feat_imp, c_alert_table, c_anom_pie]
+    title = "Hệ thống Cảnh báo Sớm Bùng phát (XGBoost + TreeSHAP) & Bất thường (Isolation Forest)"
     pos = build_grid_position(
         title=title,
         rows_spec=[
             [
                 markdown_banner(
                     "### Phần 1: Bản đồ Giám sát & Phân tầng Nguy cơ Bùng phát Toàn cầu\n"
-                    "Mô hình học máy **XGBoost** dự báo xác suất tỷ lệ ca mắc tăng tối thiểu **1,5 lần** sau **2 tuần** (và vượt ngưỡng 10 ca/100.000 dân).",
+                    "Mô hình học máy **XGBoost** dự báo xác suất tỷ lệ ca mắc tăng tối thiểu **1,5 lần** sau **2 tuần** (và vượt ngưỡng 10 ca/100.000 dân), kèm giải thích cục bộ **TreeSHAP** cho từng quốc gia.",
                     height=10,
                 )
             ],
             [(c_map, 8, 56), (c_alert_pie, 4, 56)],
             [
                 markdown_banner(
-                    "### Phần 2: Kiểm định Mô hình Chống Rò rỉ Thời gian & Giải thích Yếu tố Dự báo\n"
-                    "Đánh giá độc lập trên **11.006 quan sát kiểm thử** (có khoảng cách 2 tuần ngăn rò rỉ nhãn tương lai) và xếp hạng các yếu tố thúc đẩy dịch bùng phát.",
+                    "### Phần 2: Kiểm định Mô hình Chống Rò rỉ Thời gian & Phát hiện Bất thường (Isolation Forest)\n"
+                    "Đánh giá độc lập trên **11.006 quan sát kiểm thử** (Purged Time Split) kết hợp phát hiện các tuần dị thường lịch sử.",
                     height=10,
                 )
             ],
-            [(c_model_cmp, 6, 50), (c_feat_imp, 6, 50)],
-            [(c_alert_table, 12, 56)],
+            [(c_model_cmp, 5, 50), (c_feat_imp, 4, 50), (c_anom_pie, 3, 50)],
+            [(c_alert_table, 12, 58)],
         ],
     )
     label_colors = {

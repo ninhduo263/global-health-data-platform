@@ -3,6 +3,7 @@ import logging
 import os
 import re
 import time
+from collections import defaultdict, deque
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -45,6 +46,100 @@ DWH_CONFIG = {
     "password": os.getenv("DWH_PASSWORD", "dwh_password"),
     "connect_timeout": 10,
 }
+
+ANOMALY_WINDOW_SECONDS = int(os.getenv("CDC_ANOMALY_WINDOW_SECONDS", "300"))
+ANOMALY_BURST_THRESHOLD = int(os.getenv("CDC_ANOMALY_BURST_THRESHOLD", "8"))
+ANOMALY_COOLDOWN_SECONDS = int(os.getenv("CDC_ANOMALY_COOLDOWN_SECONDS", "30"))
+
+
+class StreamingOutbreakDetector:
+    """
+    Sliding-window streaming anomaly detector over live CDC patient events.
+    Detects sudden bursts of CONFIRMED_COVID cases per province within a time window
+    and triggers alerts to dwh.fact_realtime_anomalies.
+    """
+
+    def __init__(
+        self,
+        window_seconds: int = ANOMALY_WINDOW_SECONDS,
+        burst_threshold: int = ANOMALY_BURST_THRESHOLD,
+        cooldown_seconds: int = ANOMALY_COOLDOWN_SECONDS,
+    ):
+        self.window_seconds = int(window_seconds)
+        self.burst_threshold = int(burst_threshold)
+        self.cooldown_seconds = int(cooldown_seconds)
+        self.events_by_province: dict[str, deque] = defaultdict(deque)
+        self.last_alert_ts: dict[str, float] = {}
+
+    def observe(self, province: str, health_status: str, now_ts: float = None) -> dict | None:
+        if not province or (health_status or "").upper() != "CONFIRMED_COVID":
+            return None
+
+        ts = time.time() if now_ts is None else float(now_ts)
+        q = self.events_by_province[province]
+        q.append(ts)
+
+        cutoff = ts - self.window_seconds
+        while q and q[0] < cutoff:
+            q.popleft()
+
+        count = len(q)
+        if count < self.burst_threshold:
+            return None
+
+        last_ts = self.last_alert_ts.get(province, -1e18)
+        if ts - last_ts < self.cooldown_seconds:
+            return None
+
+        # Tính baseline trung bình các tỉnh khác trong cùng cửa sổ thời gian
+        other_counts = []
+        for prov, oq in self.events_by_province.items():
+            while oq and oq[0] < cutoff:
+                oq.popleft()
+            if prov != province:
+                other_counts.append(len(oq))
+
+        baseline_avg = float(sum(other_counts) / len(other_counts)) if other_counts else 1.0
+        baseline_std = max(1.0, (baseline_avg + 1.0) ** 0.5)
+        z_score = float((count - baseline_avg) / baseline_std)
+        severity = "KHẨN CẤP" if count >= self.burst_threshold * 2 else "CẢNH BÁO CAO"
+
+        self.last_alert_ts[province] = ts
+        return {
+            "province": province,
+            "window_seconds": self.window_seconds,
+            "confirmed_count": count,
+            "baseline_avg": round(baseline_avg, 2),
+            "z_score": round(z_score, 2),
+            "severity_vi": severity,
+            "alert_message_vi": (
+                f"Phát hiện ổ dịch bất thường tại {province}: {count} ca dương tính "
+                f"trong {self.window_seconds}s gần nhất (Z-score = {z_score:.2f})."
+            ),
+        }
+
+
+STREAMING_DETECTOR = StreamingOutbreakDetector()
+
+
+def persist_realtime_anomaly(cursor, alert: dict) -> None:
+    cursor.execute(
+        """
+        INSERT INTO dwh.fact_realtime_anomalies (
+            province, window_seconds, confirmed_count, baseline_avg,
+            z_score, severity_vi, alert_message_vi
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """,
+        (
+            alert["province"],
+            alert["window_seconds"],
+            alert["confirmed_count"],
+            alert["baseline_avg"],
+            alert["z_score"],
+            alert["severity_vi"],
+            alert["alert_message_vi"],
+        ),
+    )
 
 
 def ensure_connector() -> None:
@@ -378,7 +473,17 @@ def apply_event(connection, topic, raw_key, raw_value) -> None:
                 center_row = row or key
                 apply_center_event(cursor, operation, center_row)
             elif table_name == "patients":
-                apply_patient_event(cursor, operation, row or key)
+                patient_row = row or key
+                apply_patient_event(cursor, operation, patient_row)
+                # Chỉ kích hoạt phát hiện ổ dịch realtime trên sự kiện trực tuyến (không tính snapshot 'r')
+                if operation in ("c", "u") and patient_row:
+                    alert = STREAMING_DETECTOR.observe(
+                        patient_row.get("province"),
+                        patient_row.get("health_status"),
+                    )
+                    if alert:
+                        persist_realtime_anomaly(cursor, alert)
+                        logger.warning("REALTIME OUTBREAK ALERT: %s", alert["alert_message_vi"])
             elif table_name == "vaccination_records":
                 apply_record_event(cursor, operation, row, key)
             else:

@@ -24,8 +24,9 @@ Luồng trình bày xuyên suốt: **Thu thập đa nguồn (OWID/WHO/MySQL) →
    - **Tab 3 — Dashboard 1 (Tổng quan K-Means)**: `http://localhost:8089/superset/dashboard/covid19-kmeans-clusters/`
    - **Tab 4 — Dashboard 2 (Đánh giá K & PCA)**: `http://localhost:8089/superset/dashboard/covid19-kmeans-mining/`
    - **Tab 5 — Dashboard 3 (Cảnh báo sớm XGBoost)**: `http://localhost:8089/superset/dashboard/covid19-early-warning/`
-   - **Tab 6 — Dashboard 4 (CDC Bệnh nhân & Tiêm chủng)**: `http://localhost:8089/superset/dashboard/covid19-cdc-patients-vaccination/`
-   - **Cửa sổ PowerShell**: đứng sẵn tại thư mục gốc `BTL-covid19` để chạy lệnh live.
+   - **Tab 6 — Dashboard 4 (CDC Bệnh nhân, Tiêm chủng & Luật Kết hợp Apriori)**: `http://localhost:8089/superset/dashboard/covid19-cdc-patients-vaccination/`
+   - **Tab 7 — Cổng AI Tương tác (Streamlit Portal)**: `http://localhost:8501` (Mô phỏng What-If XGBoost + TreeSHAP, Tra cứu Apriori, Markov $P^k$ & Cảnh báo ổ dịch Realtime)
+   - **Cửa sổ PowerShell**: đứng sẵn tại thư mục gốc `BTL-covid19` để chạy lệnh live (`demo_cdc.ps1`, `demo_realtime_outbreak.ps1`).
 
 ---
 

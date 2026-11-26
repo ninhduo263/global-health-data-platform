@@ -359,6 +359,9 @@ CREATE TABLE IF NOT EXISTS dwh.fact_early_warning (
     PRIMARY KEY (week_start, country_code, model_version)
 );
 
+ALTER TABLE dwh.fact_early_warning
+    ADD COLUMN IF NOT EXISTS top_reasons_vi TEXT;
+
 CREATE INDEX IF NOT EXISTS idx_early_warning_split_week
     ON dwh.fact_early_warning(prediction_split, week_start);
 
@@ -399,7 +402,10 @@ CREATE TABLE IF NOT EXISTS dwh.fact_early_warning_feature_importance (
     PRIMARY KEY (model_version, feature_name)
 );
 
-CREATE OR REPLACE VIEW dwh.vw_early_warning AS
+DROP VIEW IF EXISTS dwh.vw_early_warning_latest;
+DROP VIEW IF EXISTS dwh.vw_early_warning;
+
+CREATE VIEW dwh.vw_early_warning AS
 SELECT
     ew.*,
     CASE ew.alert_level
@@ -416,7 +422,7 @@ SELECT
 FROM dwh.fact_early_warning AS ew;
 
 -- Cảnh báo mới nhất của từng quốc gia (tuần gần nhất chưa có nhãn thực tế)
-CREATE OR REPLACE VIEW dwh.vw_early_warning_latest AS
+CREATE VIEW dwh.vw_early_warning_latest AS
 SELECT DISTINCT ON (ew.country_code, ew.model_version)
     ew.*,
     CASE ew.alert_level
@@ -547,3 +553,47 @@ SELECT
     ROUND((r.support * 100)::numeric, 2) AS support_pct,
     ROUND((r.confidence * 100)::numeric, 2) AS confidence_pct
 FROM dwh.fact_patient_association_rules AS r;
+
+-- ============================================================================
+-- PHÁT HIỆN BẤT THƯỜNG LỊCH SỬ (ISOLATION FOREST) & Ổ DỊCH THỜI GIAN THỰC (CDC)
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS dwh.fact_covid_anomalies (
+    model_version VARCHAR(40) NOT NULL,
+    week_start DATE NOT NULL,
+    country_code VARCHAR(10) NOT NULL,
+    country_name VARCHAR(150) NOT NULL,
+    cases_per_100k DOUBLE PRECISION NOT NULL,
+    deaths_per_100k DOUBLE PRECISION NOT NULL,
+    case_growth_pct DOUBLE PRECISION,
+    case_z_score DOUBLE PRECISION NOT NULL,
+    death_z_score DOUBLE PRECISION NOT NULL,
+    anomaly_score DOUBLE PRECISION NOT NULL,
+    anomaly_type_vi VARCHAR(60) NOT NULL,
+    explanation_vi TEXT NOT NULL,
+    computed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (model_version, week_start, country_code)
+);
+
+CREATE INDEX IF NOT EXISTS idx_covid_anomalies_score
+    ON dwh.fact_covid_anomalies(anomaly_score DESC);
+
+CREATE OR REPLACE VIEW dwh.vw_covid_anomalies AS
+SELECT * FROM dwh.fact_covid_anomalies;
+
+CREATE TABLE IF NOT EXISTS dwh.fact_realtime_anomalies (
+    alert_id BIGSERIAL PRIMARY KEY,
+    detected_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    province VARCHAR(100) NOT NULL,
+    window_seconds INT NOT NULL,
+    confirmed_count INT NOT NULL,
+    baseline_avg DOUBLE PRECISION NOT NULL,
+    z_score DOUBLE PRECISION NOT NULL,
+    severity_vi VARCHAR(30) NOT NULL,
+    alert_message_vi TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_realtime_anomalies_detected_at
+    ON dwh.fact_realtime_anomalies(detected_at DESC);
+
+CREATE OR REPLACE VIEW dwh.vw_realtime_anomalies AS
+SELECT * FROM dwh.fact_realtime_anomalies;

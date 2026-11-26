@@ -349,6 +349,27 @@ class ConsumerTests(unittest.TestCase):
         self.assertEqual(connection.commits, 0)
         self.assertEqual(connection.rollbacks, 1)
 
+    def test_streaming_outbreak_detector_triggers_on_confirmed_burst(self):
+        detector = consumer.StreamingOutbreakDetector(
+            window_seconds=300,
+            burst_threshold=5,
+            cooldown_seconds=60,
+        )
+        base_ts = 1_700_000_000.0
+        # Sự kiện HEALTHY không kích hoạt cảnh báo
+        self.assertIsNone(detector.observe("Hà Nội", "HEALTHY", now_ts=base_ts))
+        # 4 ca dương tính đầu chưa đạt ngưỡng 5
+        for i in range(4):
+            self.assertIsNone(detector.observe("Hà Nội", "CONFIRMED_COVID", now_ts=base_ts + i))
+        # Ca dương tính thứ 5 trong cùng cửa sổ thời gian kích hoạt cảnh báo
+        alert = detector.observe("Hà Nội", "CONFIRMED_COVID", now_ts=base_ts + 5)
+        self.assertIsNotNone(alert)
+        self.assertEqual(alert["province"], "Hà Nội")
+        self.assertEqual(alert["confirmed_count"], 5)
+        self.assertIn("Hà Nội", alert["alert_message_vi"])
+        # Trong thời gian cooldown không bắn trùng cảnh báo
+        self.assertIsNone(detector.observe("Hà Nội", "CONFIRMED_COVID", now_ts=base_ts + 10))
+
 
 if __name__ == "__main__":
     unittest.main()

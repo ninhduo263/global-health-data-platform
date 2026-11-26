@@ -4,6 +4,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "dags"))
 
+from covid_anomaly_detection import detect_weekly_anomalies
 from covid_cluster_transitions import (
     compute_cluster_dwell_times,
     compute_cluster_transitions,
@@ -100,6 +101,38 @@ class PatientAssociationRuleTests(unittest.TestCase):
         self.assertGreater(top_covid_rule["lift"], 3.0)
         self.assertGreaterEqual(top_covid_rule["confidence"], 0.85)
         self.assertIn("Bệnh nền: Tiểu đường", top_covid_rule["antecedents"])
+
+
+class AnomalyDetectionTests(unittest.TestCase):
+    def test_isolation_forest_flags_extreme_outbreak_spike(self):
+        from datetime import date, timedelta
+
+        rows = []
+        start = date(2021, 1, 4)
+        for i in range(40):
+            wk = (start + timedelta(days=7 * i)).isoformat()
+            # Tuần 30 có đột biến cực lớn về ca mắc và tử vong
+            if i == 30:
+                cases, deaths, growth = 2500.0, 45.0, 2400.0
+            else:
+                cases, deaths, growth = 20.0 + (i % 3), 0.2, 2.0
+            rows.append(
+                {
+                    "week_start": wk,
+                    "country_code": "VNM",
+                    "country_name": "Vietnam",
+                    "cases_per_100k": cases,
+                    "deaths_per_100k": deaths,
+                    "case_growth_pct": growth,
+                }
+            )
+
+        anomalies = detect_weekly_anomalies(rows, contamination=0.05)
+        self.assertTrue(len(anomalies) >= 1)
+        flagged_weeks = [str(a["week_start"]) for a in anomalies]
+        expected_spike_week = (start + timedelta(days=7 * 30)).isoformat()
+        self.assertIn(expected_spike_week, flagged_weeks)
+        self.assertTrue(all(a["anomaly_type_vi"] for a in anomalies))
 
 
 if __name__ == "__main__":

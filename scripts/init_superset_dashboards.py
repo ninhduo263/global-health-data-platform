@@ -54,10 +54,13 @@ ALL_DWH_VIEWS = [
     ("vw_weekly_covid_clusters", "week_start"),
     ("vw_kmeans_evaluation", None),
     ("vw_kmeans_cluster_profile", None),
+    ("vw_cluster_transition", None),
+    ("vw_cluster_dwell_time", None),
     ("vw_early_warning", "week_start"),
     ("vw_early_warning_latest", "week_start"),
     ("vw_early_warning_evaluation", None),
     ("vw_early_warning_feature_importance", None),
+    ("vw_patient_association_rules", None),
 ]
 
 DATASET_COLUMN_PUT_KEYS = {
@@ -178,6 +181,41 @@ COLUMN_VERBOSE_NAMES = {
     "importance": "Mức độ đóng góp",
     "importance_rank": "Thứ hạng quan trọng",
     "computed_at": "Thời điểm tính toán",
+    # Khai phá Chuyển dịch Cụm Markov & Dwell Time
+    "from_cluster_id": "Mã cụm nguồn",
+    "from_cluster_label": "Cụm tuần hiện tại (t)",
+    "to_cluster_id": "Mã cụm đích",
+    "to_cluster_label": "Cụm tuần kế tiếp (t+1)",
+    "transition_pair_vi": "Chiều chuyển dịch cụm",
+    "transition_count": "Số lần chuyển cụm",
+    "from_total_count": "Tổng số tuần ở cụm nguồn",
+    "transition_probability": "Xác suất chuyển cụm",
+    "transition_prob_pct": "Xác suất chuyển cụm (%)",
+    "is_self_transition": "Giữ nguyên cụm",
+    "transition_type_vi": "Xu hướng chuyển dịch",
+    "episode_count": "Số đợt lưu trú",
+    "total_weeks": "Tổng số tuần",
+    "avg_dwell_weeks": "Số tuần lưu trú TB / đợt",
+    "median_dwell_weeks": "Số tuần lưu trú trung vị",
+    "max_dwell_weeks": "Đợt dài nhất (tuần)",
+    "retention_probability": "Xác suất duy trì cụm",
+    "retention_prob_pct": "Xác suất duy trì cụm (%)",
+    # Khai phá Luật kết hợp (Apriori / FP-Growth)
+    "rule_id": "Thứ hạng luật",
+    "antecedents": "Tổ hợp điều kiện (Vế trái)",
+    "consequent": "Kết cục sức khỏe (Vế phải)",
+    "rule_text_vi": "Phát biểu Luật kết hợp",
+    "antecedent_count": "Số điều kiện kết hợp",
+    "support_count": "Số bệnh nhân khớp luật",
+    "total_transactions": "Tổng số bệnh nhân",
+    "support": "Độ phổ biến (Support)",
+    "support_pct": "Độ phổ biến Support (%)",
+    "confidence": "Độ tin cậy (Confidence)",
+    "confidence_pct": "Độ tin cậy Confidence (%)",
+    "lift": "Độ nâng (Lift)",
+    "leverage": "Độ đòn bẩy (Leverage)",
+    "conviction": "Độ thuyết phục (Conviction)",
+    "target_category_vi": "Nhóm kết cục sức khỏe",
 }
 
 
@@ -762,6 +800,8 @@ def provision_kmeans_dashboard(
     eval_id = ds["vw_kmeans_evaluation"]["id"]
     prof_id = ds["vw_kmeans_cluster_profile"]["id"]
     clus_id = ds["vw_weekly_covid_clusters"]["id"]
+    trans_id = ds["vw_cluster_transition"]["id"]
+    dwell_id = ds["vw_cluster_dwell_time"]["id"]
 
     # 1. Elbow Chart (Inertia theo K)
     c_elbow = client.upsert_chart(
@@ -925,8 +965,63 @@ def provision_kmeans_dashboard(
         existing_charts=existing_charts,
     )
 
-    charts = [c_elbow, c_sil, c_pca, c_pie, c_prof_table, c_trend]
-    title = "Phân tích Phân cụm Dịch tễ COVID-19 — Đánh giá Số cụm K & Hồ sơ Cụm"
+    # 7. Ma trận Xác suất Chuyển dịch Cụm Markov bậc 1 (%)
+    c_markov = client.upsert_chart(
+        slice_name="Ma trận Xác suất Chuyển dịch Cụm sang Tuần Kế tiếp (Markov %)",
+        viz_type="dist_bar",
+        dataset_id=trans_id,
+        params={
+            "groupby": ["from_cluster_label"],
+            "columns": ["to_cluster_label"],
+            "metrics": [sql_metric("ROUND(MAX(transition_prob_pct)::numeric, 2)", "Xác suất chuyển cụm (%)")],
+            "order_bars": False,
+            "show_legend": True,
+            "show_bar_value": True,
+            "bar_stacked": True,
+            "x_axis_label": "Cụm dịch tễ ở tuần hiện tại (t)",
+            "y_axis_label": "Xác suất chuyển sang cụm ở tuần t+1 (%)",
+            "adhoc_filters": [],
+            "row_limit": 50,
+            "color_scheme": "supersetColors",
+        },
+        description="Xác suất một quốc gia giữ nguyên cụm, leo thang dịch hoặc hạ nhiệt vào tuần kế tiếp.",
+        existing_charts=existing_charts,
+    )
+
+    # 8. Bảng Thời gian Lưu trú Liên tục (Dwell Time) & Xác suất Duy trì Cụm
+    dwell_metrics = [
+        sql_metric("MAX(episode_count)", "Số đợt lưu trú"),
+        sql_metric("ROUND(MAX(avg_dwell_weeks)::numeric, 2)", "Số tuần lưu trú TB / đợt"),
+        sql_metric("ROUND(MAX(median_dwell_weeks)::numeric, 1)", "Số tuần trung vị / đợt"),
+        sql_metric("MAX(max_dwell_weeks)", "Đợt kéo dài lâu nhất (tuần)"),
+        sql_metric("ROUND(MAX(retention_prob_pct)::numeric, 2)", "Xác suất duy trì cụm (%)"),
+    ]
+    c_dwell = client.upsert_chart(
+        slice_name="Bảng Thời gian Lưu trú Liên tục (Dwell Time) & Độ Bền từng Cụm",
+        viz_type="table",
+        dataset_id=dwell_id,
+        params={
+            "query_mode": "aggregate",
+            "groupby": ["cluster_id", "cluster_label"],
+            "metrics": dwell_metrics,
+            "order_desc": False,
+            "row_limit": 20,
+            "adhoc_filters": [],
+            "show_cell_bars": True,
+        },
+        query_context=make_table_query_context(
+            dwell_id,
+            ["cluster_id", "cluster_label"],
+            dwell_metrics,
+            orderby=[["cluster_id", True]],
+            row_limit=20,
+        ),
+        description="Thống kê số tuần liên tiếp trung bình một quốc gia lưu lại trong từng vùng dịch trước khi chuyển cụm.",
+        existing_charts=existing_charts,
+    )
+
+    charts = [c_elbow, c_sil, c_pca, c_pie, c_prof_table, c_trend, c_markov, c_dwell]
+    title = "Phân tích Phân cụm Dịch tễ COVID-19 — Đánh giá Số cụm K, PCA & Chuyển cụm Markov"
     pos = build_grid_position(
         title=title,
         rows_spec=[
@@ -947,6 +1042,14 @@ def provision_kmeans_dashboard(
             ],
             [(c_pca, 8, 56), (c_pie, 4, 56)],
             [(c_prof_table, 6, 50), (c_trend, 6, 50)],
+            [
+                markdown_banner(
+                    "### Phần 3: Khai phá Chuỗi Chuyển dịch Cụm (Markov Transition Matrix & Thời gian Lưu trú Dwell Time)\n"
+                    "Đo lường xác suất chuyển trạng thái $P(\\text{Cụm}_{t+1} \\mid \\text{Cụm}_t)$ và số tuần trung bình một quốc gia lưu lại trong từng vùng dịch.",
+                    height=10,
+                )
+            ],
+            [(c_markov, 6, 52), (c_dwell, 6, 52)],
         ],
     )
     label_colors = {
@@ -1184,6 +1287,7 @@ def provision_cdc_patients_dashboard(
     pat_id = ds["vw_dashboard_patients"]["id"]
     vax_id = ds["vw_dashboard_vaccinations"]["id"]
     vax_pat_id = ds["vw_vaccination_by_patient"]["id"]
+    rules_id = ds["vw_patient_association_rules"]["id"]
 
     # 1. Big Number: Tổng bệnh nhân ẩn danh
     m_total_pat = sql_metric("SUM(patient_count)", "Tổng số bệnh nhân")
@@ -1328,14 +1432,93 @@ def provision_cdc_patients_dashboard(
         existing_charts=existing_charts,
     )
 
-    charts = [c_kpi_pat, c_kpi_vax, c_age_status, c_comorb_pie, c_vax_by_age, c_prov_table]
-    title = "Giám sát Thời gian thực — Hồ sơ Bệnh nhân Ẩn danh & Tiêm chủng Nội bộ"
+    # 7. Biểu đồ Top 10 Luật kết hợp có Độ nâng (Lift) cao nhất
+    c_rules_bar = client.upsert_chart(
+        slice_name="Top 10 Luật Kết hợp Dịch tễ có Độ nâng (Lift) Cao nhất",
+        viz_type="dist_bar",
+        dataset_id=rules_id,
+        params={
+            "groupby": ["rule_text_vi"],
+            "columns": [],
+            "metrics": [
+                sql_metric("ROUND(MAX(lift)::numeric, 2)", "Độ nâng (Lift)"),
+                sql_metric("ROUND(MAX(confidence)::numeric, 2)", "Độ tin cậy (0 – 1)"),
+            ],
+            "order_bars": False,
+            "show_legend": True,
+            "show_bar_value": True,
+            "bar_stacked": False,
+            "x_axis_label": "Luật kết hợp {Điều kiện} => {Kết cục}",
+            "y_axis_label": "Hệ số Lift & Confidence",
+            "adhoc_filters": [
+                {
+                    "expressionType": "SIMPLE",
+                    "subject": "rule_id",
+                    "operator": "<=",
+                    "comparator": "10",
+                    "clause": "WHERE",
+                    "sqlExpression": None,
+                    "isExtra": False,
+                    "isNew": False,
+                }
+            ],
+            "row_limit": 10,
+            "color_scheme": "supersetColors",
+        },
+        description="Xếp hạng các quy luật kết hợp mạnh nhất giữa tuổi, bệnh nền, số mũi tiêm và tình trạng nhiễm COVID-19.",
+        existing_charts=existing_charts,
+    )
+
+    # 8. Bảng Chi tiết Luật kết hợp Bệnh nhân & Tiêm chủng (Apriori / FP-Growth)
+    m_lift = sql_metric("ROUND(MAX(lift)::numeric, 2)", "Độ nâng (Lift)")
+    rule_metrics = [
+        m_lift,
+        sql_metric("ROUND(MAX(confidence_pct)::numeric, 1)", "Độ tin cậy (%)"),
+        sql_metric("ROUND(MAX(support_pct)::numeric, 2)", "Độ phổ biến (%)"),
+        sql_metric("MAX(support_count)", "Số bệnh nhân khớp"),
+        sql_metric("ROUND(MAX(conviction)::numeric, 2)", "Độ thuyết phục"),
+    ]
+    c_rules_table = client.upsert_chart(
+        slice_name="Bảng Khai phá Luật Kết hợp Bệnh nhân & Tiêm chủng (Apriori / FP-Growth)",
+        viz_type="table",
+        dataset_id=rules_id,
+        params={
+            "query_mode": "aggregate",
+            "groupby": ["rule_id", "antecedents", "target_category_vi"],
+            "metrics": rule_metrics,
+            "order_desc": True,
+            "row_limit": 40,
+            "adhoc_filters": [],
+            "show_cell_bars": True,
+        },
+        query_context=make_table_query_context(
+            rules_id,
+            ["rule_id", "antecedents", "target_category_vi"],
+            rule_metrics,
+            orderby=[[m_lift, False]],
+            row_limit=40,
+        ),
+        description="Danh sách các luật kết hợp khai phá từ hồ sơ bệnh nhân ẩn danh và lịch sử mũi tiêm.",
+        existing_charts=existing_charts,
+    )
+
+    charts = [
+        c_kpi_pat,
+        c_kpi_vax,
+        c_age_status,
+        c_comorb_pie,
+        c_vax_by_age,
+        c_prov_table,
+        c_rules_bar,
+        c_rules_table,
+    ]
+    title = "Giám sát Thời gian thực & Khai phá Luật Kết hợp — Bệnh nhân Ẩn danh & Tiêm chủng"
     pos = build_grid_position(
         title=title,
         rows_spec=[
             [
                 markdown_banner(
-                    "### Đồng bộ Biến động Dữ liệu Thời gian thực (MySQL → Debezium → Kafka → PostgreSQL)\n"
+                    "### Phần 1: Đồng bộ Biến động Dữ liệu Thời gian thực (MySQL → Debezium → Kafka → PostgreSQL)\n"
                     "Mọi hồ sơ bệnh nhân phát sinh mới đều được tự động loại bỏ thông tin định danh cá nhân (**họ tên, mã công dân**) trước khi đưa vào Kho dữ liệu phân tích.",
                     height=10,
                 )
@@ -1343,6 +1526,14 @@ def provision_cdc_patients_dashboard(
             [(c_kpi_pat, 6, 32), (c_kpi_vax, 6, 32)],
             [(c_age_status, 7, 50), (c_comorb_pie, 5, 50)],
             [(c_vax_by_age, 6, 50), (c_prov_table, 6, 50)],
+            [
+                markdown_banner(
+                    "### Phần 2: Khai phá Luật Kết hợp Dịch tễ (Association Rule Mining — Apriori / FP-Growth)\n"
+                    "Phát hiện các tổ hợp **{Nhóm tuổi + Bệnh nền + Số mũi tiêm / Loại vắc-xin} ⇒ {Tình trạng COVID-19}** có **Độ tin cậy (Confidence)** và **Độ nâng (Lift)** cao vượt trội.",
+                    height=10,
+                )
+            ],
+            [(c_rules_bar, 5, 56), (c_rules_table, 7, 56)],
         ],
     )
     label_colors = {

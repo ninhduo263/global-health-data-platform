@@ -621,6 +621,7 @@ def cluster_weekly_covid_callable(**context) -> None:
     import psycopg2
     from psycopg2.extras import execute_values
 
+    from covid_cluster_transitions import run_cluster_transition_mining
     from weekly_covid_kmeans import run_weekly_clustering
 
     conn = psycopg2.connect(
@@ -709,6 +710,14 @@ def cluster_weekly_covid_callable(**context) -> None:
             )
             cur.execute(
                 "DELETE FROM dwh.fact_kmeans_cluster_profile WHERE model_version = %s",
+                (model_version,),
+            )
+            cur.execute(
+                "DELETE FROM dwh.fact_cluster_transition WHERE model_version = %s",
+                (model_version,),
+            )
+            cur.execute(
+                "DELETE FROM dwh.fact_cluster_dwell_time WHERE model_version = %s",
                 (model_version,),
             )
 
@@ -819,6 +828,66 @@ def cluster_weekly_covid_callable(**context) -> None:
                     ) VALUES %s
                     """,
                     profile_values,
+                )
+
+            transition_result = run_cluster_transition_mining(clustered_records)
+            transitions = transition_result["transitions"]
+            dwell_times = transition_result["dwell_times"]
+
+            if transitions:
+                trans_values = [
+                    (
+                        model_version,
+                        t["from_cluster_id"],
+                        t["from_cluster_label"],
+                        t["to_cluster_id"],
+                        t["to_cluster_label"],
+                        t["transition_count"],
+                        t["from_total_count"],
+                        t["transition_probability"],
+                        t["is_self_transition"],
+                        t["transition_type_vi"],
+                    )
+                    for t in transitions
+                ]
+                execute_values(
+                    cur,
+                    """
+                    INSERT INTO dwh.fact_cluster_transition (
+                        model_version, from_cluster_id, from_cluster_label,
+                        to_cluster_id, to_cluster_label, transition_count,
+                        from_total_count, transition_probability,
+                        is_self_transition, transition_type_vi
+                    ) VALUES %s
+                    """,
+                    trans_values,
+                )
+
+            if dwell_times:
+                dwell_values = [
+                    (
+                        model_version,
+                        d["cluster_id"],
+                        d["cluster_label"],
+                        d["episode_count"],
+                        d["total_weeks"],
+                        d["avg_dwell_weeks"],
+                        d["median_dwell_weeks"],
+                        d["max_dwell_weeks"],
+                        d["retention_probability"],
+                    )
+                    for d in dwell_times
+                ]
+                execute_values(
+                    cur,
+                    """
+                    INSERT INTO dwh.fact_cluster_dwell_time (
+                        model_version, cluster_id, cluster_label, episode_count,
+                        total_weeks, avg_dwell_weeks, median_dwell_weeks,
+                        max_dwell_weeks, retention_probability
+                    ) VALUES %s
+                    """,
+                    dwell_values,
                 )
 
         conn.commit()
@@ -1056,6 +1125,128 @@ def early_warning_callable(**context) -> None:
         conn.close()
 
 
+def mine_patient_rules_callable(**context) -> None:
+    """Mine association rules on anonymized CDC patients + vaccination records and persist to DWH."""
+    import psycopg2
+    from psycopg2.extras import execute_values
+
+    from patient_association_rules import mine_patient_association_rules
+
+    min_support = float(os.getenv("COVID_AR_MIN_SUPPORT", "0.015"))
+    min_confidence = float(os.getenv("COVID_AR_MIN_CONFIDENCE", "0.20"))
+    min_lift = float(os.getenv("COVID_AR_MIN_LIFT", "1.08"))
+    top_k = int(os.getenv("COVID_AR_TOP_K", "40"))
+    model_version = os.getenv("COVID_AR_MODEL_VERSION", "apriori-v1")
+
+    conn = psycopg2.connect(
+        host=DWH_HOST,
+        port=DWH_PORT,
+        dbname=DWH_DB,
+        user=DWH_USER,
+        password=DWH_PASSWORD,
+    )
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                WITH vax_by_patient AS (
+                    SELECT
+                        f.patient_id,
+                        COUNT(*)::int AS dose_count,
+                        (ARRAY_AGG(f.vaccine_type ORDER BY f.dose_number ASC))[1] AS primary_vaccine
+                    FROM dwh.fact_vaccination AS f
+                    WHERE f.patient_id IS NOT NULL
+                    GROUP BY f.patient_id
+                )
+                SELECT
+                    p.patient_id,
+                    p.birth_year,
+                    COALESCE(d.year, 2022) AS reported_year,
+                    p.gender,
+                    p.province,
+                    p.health_status,
+                    p.comorbidity,
+                    COALESCE(v.dose_count, 0) AS dose_count,
+                    v.primary_vaccine
+                FROM dwh.dim_patient AS p
+                LEFT JOIN dwh.dim_date AS d ON d.date_id = p.reported_date_id
+                LEFT JOIN vax_by_patient AS v ON v.patient_id = p.patient_id
+                WHERE NOT p.is_placeholder
+                ORDER BY p.patient_id
+                """
+            )
+            cols = (
+                "patient_id",
+                "birth_year",
+                "reported_year",
+                "gender",
+                "province",
+                "health_status",
+                "comorbidity",
+                "dose_count",
+                "primary_vaccine",
+            )
+            patient_rows = [dict(zip(cols, row)) for row in cur.fetchall()]
+            if not patient_rows:
+                logger.warning("No anonymized patient records found in dwh.dim_patient; skipping association rules")
+                return
+
+            rules = mine_patient_association_rules(
+                patient_rows,
+                min_support=min_support,
+                min_confidence=min_confidence,
+                min_lift=min_lift,
+                top_k=top_k,
+            )
+
+            cur.execute(
+                "DELETE FROM dwh.fact_patient_association_rules WHERE model_version = %s",
+                (model_version,),
+            )
+            if rules:
+                rule_values = [
+                    (
+                        model_version,
+                        r["rule_id"],
+                        r["antecedents"],
+                        r["consequent"],
+                        r["rule_text_vi"],
+                        r["antecedent_count"],
+                        r["support_count"],
+                        r["total_transactions"],
+                        r["support"],
+                        r["confidence"],
+                        r["lift"],
+                        r["leverage"],
+                        r["conviction"],
+                        r["target_category_vi"],
+                    )
+                    for r in rules
+                ]
+                execute_values(
+                    cur,
+                    """
+                    INSERT INTO dwh.fact_patient_association_rules (
+                        model_version, rule_id, antecedents, consequent, rule_text_vi,
+                        antecedent_count, support_count, total_transactions,
+                        support, confidence, lift, leverage, conviction, target_category_vi
+                    ) VALUES %s
+                    """,
+                    rule_values,
+                )
+        conn.commit()
+        logger.info(
+            "Persisted %s association rules mined from %s anonymized CDC patients",
+            len(rules),
+            len(patient_rows),
+        )
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 # ============================================================================
 # KHỞI TẠO ĐỐI TƯỢNG DAG
 # ============================================================================
@@ -1133,5 +1324,14 @@ with DAG(
         ),
     )
 
+    patient_association_rules = PythonOperator(
+        task_id="patient_association_rules",
+        python_callable=mine_patient_rules_callable,
+        doc_md=(
+            "Khai phá luật kết hợp (Apriori / FP-Growth) giữa nhóm tuổi, giới tính, bệnh nền, "
+            "số mũi tiêm và tình trạng nhiễm COVID-19 trên dữ liệu bệnh nhân ẩn danh CDC."
+        ),
+    )
+
     [extract_owid_api, extract_who_csv, extract_mysql_oltp] >> load_to_minio >> transform_and_load_to_dwh
-    transform_and_load_to_dwh >> weekly_covid_kmeans >> covid_early_warning
+    transform_and_load_to_dwh >> weekly_covid_kmeans >> [covid_early_warning, patient_association_rules]

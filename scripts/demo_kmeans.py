@@ -161,6 +161,58 @@ def main():
     """
     print(run_psql(sql_latest))
     print()
+
+    # BƯỚC 7: MA TRẬN CHUYỂN DỊCH CỤM MARKOV & THỜI GIAN LƯU TRÚ (DWELL TIME)
+    print("--- [BƯỚC 7] KHAI PHÁ CHUỖI CHUYỂN DỊCH CỤM MARKOV & DWELL TIME (dwh.vw_cluster_*) ---")
+    sql_dwell = """
+    SELECT
+        cluster_id AS "Cụm",
+        cluster_label AS "Nhãn cụm",
+        episode_count AS "Số đợt",
+        ROUND(avg_dwell_weeks::numeric, 2) AS "Lưu trú TB (tuần)",
+        max_dwell_weeks AS "Đợt dài nhất (tuần)",
+        retention_prob_pct AS "Xác suất giữ cụm (%)"
+    FROM dwh.vw_cluster_dwell_time
+    WHERE model_version = 'weekly-kmeans-v1'
+    ORDER BY cluster_id;
+    """
+    print(run_psql(sql_dwell))
+    print()
+
+    sql_trans = """
+    SELECT
+        from_cluster_id AS "Từ",
+        to_cluster_id AS "Sang",
+        transition_pair_vi AS "Chiều chuyển dịch cụm",
+        transition_count AS "Số lần",
+        transition_prob_pct AS "Xác suất (%)",
+        transition_type_vi AS "Xu hướng"
+    FROM dwh.vw_cluster_transition
+    WHERE model_version = 'weekly-kmeans-v1'
+      AND transition_count > 0
+    ORDER BY from_cluster_id, to_cluster_id;
+    """
+    print(run_psql(sql_trans))
+    print()
+
+    # BƯỚC 8: KHAI PHÁ LUẬT KẾT HỢP BỆNH NHÂN & TIÊM CHỦNG (APRIORI / FP-GROWTH)
+    print("--- [BƯỚC 8] TOP 10 LUẬT KẾT HỢP BỆNH NHÂN & TIÊM CHỦNG (dwh.vw_patient_association_rules) ---")
+    sql_rules = """
+    SELECT
+        rule_id AS "Hạng",
+        antecedents AS "Tổ hợp điều kiện (Vế trái)",
+        target_category_vi AS "Kết cục (Vế phải)",
+        support_count AS "Số BN",
+        support_pct AS "Support (%)",
+        confidence_pct AS "Confidence (%)",
+        ROUND(lift::numeric, 2) AS "Lift"
+    FROM dwh.vw_patient_association_rules
+    WHERE model_version = 'apriori-v1'
+    ORDER BY rule_id
+    LIMIT 10;
+    """
+    print(run_psql(sql_rules))
+    print()
     print("=" * 92)
 
 

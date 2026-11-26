@@ -16,7 +16,8 @@ Hệ thống được xây dựng nhằm giải quyết trọn vẹn bài toán 
 2. **Bảo vệ quyền riêng tư theo thiết kế (Privacy by Design)**: Tự động loại bỏ thông tin định danh cá nhân (`full_name`, `citizen_hash`) trước khi dữ liệu đi vào Kho dữ liệu phân tích.
 3. **Phân cụm xu hướng dịch tễ không giám sát (Unsupervised Clustering — K-Means nâng cao)**: Tự động kiểm định số cụm tối ưu $K$, giải mã tâm cụm để sinh nhãn nghiệp vụ tiếng Việt và giảm chiều bằng **PCA** để trực quan hóa.
 4. **Cảnh báo sớm bùng phát dịch có giám sát (Supervised Classification — XGBoost)**: Dự báo trước **2 tuần** nguy cơ bùng phát dịch tại từng quốc gia với cơ chế chia tập thời gian chống rò rỉ dữ liệu (**Purged Time-Series Split**).
-5. **Trực quan hóa tự động 100% tiếng Việt trên Apache Superset**: Cung cấp 12 Dataset, 21 biểu đồ và 4 bảng điều khiển chuyên đề phục vụ ra quyết định.
+5. **Khai phá Chuỗi chuyển dịch cụm (Markov Transition Matrix & Dwell Time) & Luật kết hợp (Association Rule Mining — Apriori / FP-Growth)**: Định lượng xác suất chuyển trạng thái dịch giữa các tuần, thời gian lưu trú trung bình tại từng vùng dịch và phát hiện các tổ hợp `{Nhóm tuổi + Bệnh nền + Tiêm chủng} ⇒ {Tình trạng COVID-19}` có độ nâng (`Lift`) cao.
+6. **Trực quan hóa tự động 100% tiếng Việt trên Apache Superset**: Cung cấp 15 Dataset, 25 biểu đồ và 4 bảng điều khiển chuyên đề phục vụ ra quyết định.
 
 ---
 
@@ -211,6 +212,26 @@ erDiagram
 | Luật cơ sở (Tăng tuần trước $\ge 25\%$) | 0,50 | 0,104 | 0,347 | 0,161 | 0,728 | 0,070 |
 
 *(Kiểm chứng Ablation khi loại bỏ `cluster_id` khỏi XGBoost cho kết quả `ROC-AUC = 0,926`, `PR-AUC = 0,264`, `F1 = 0,355` — khẳng định mô hình hoàn toàn trung thực, không bị rò rỉ thông tin từ tâm cụm).*
+
+---
+
+### 4.3. Bài toán 3: Khai phá Chuỗi Chuyển dịch Cụm Dịch tễ (Markov Transition & Dwell Time)
+*(Mã nguồn: `airflow/dags/covid_cluster_transitions.py`)*
+
+- **Ma trận xác suất chuyển trạng thái Markov bậc 1**: Trên chuỗi tuần liên tiếp của từng quốc gia, hệ thống ước lượng xác suất chuyển từ cụm $i$ ở tuần $t$ sang cụm $j$ ở tuần $t+1$:
+  $$P(C_{t+1} = j \mid C_t = i) = \frac{N(i \to j)}{\sum_{k} N(i \to k)}$$
+  Mỗi bước chuyển được phân loại tự động thành: *Giữ nguyên mức dịch* ($i = j$), *Leo thang* ($j > i$) hoặc *Hạ nhiệt* ($j < i$), lưu tại `dwh.fact_cluster_transition`.
+- **Phân tích Thời gian lưu trú liên tục (Dwell Time)**: Đo độ dài các đợt (episodes) một quốc gia nằm liên tiếp trong cùng một cụm trước khi chuyển sang cụm khác (`dwh.fact_cluster_dwell_time`), qua đó xác định một đợt khủng hoảng ở vùng *Rất cao* kéo dài trung bình bao nhiêu tuần.
+
+---
+
+### 4.4. Bài toán 4: Khai phá Luật Kết hợp trên Hồ sơ Bệnh nhân & Tiêm chủng (Apriori / FP-Growth)
+*(Mã nguồn: `airflow/dags/patient_association_rules.py`)*
+
+- **Thiết lập giao dịch (Transactions)**: Mỗi hồ sơ bệnh nhân ẩn danh trong `dwh.dim_patient` kết hợp với tổng số mũi tiêm và loại vắc-xin trong `dwh.fact_vaccination` tạo thành một giao dịch gồm các hạng mục rời rạc: `{Nhóm tuổi, Giới tính, Bệnh nền, Trạng thái số mũi tiêm, Loại vắc-xin} ⇒ {Kết cục sức khỏe}`.
+- **Các độ đo đánh giá luật $A \Rightarrow B$**:
+  $$\text{Support}(A \Rightarrow B) = P(A \cup B), \quad \text{Confidence}(A \Rightarrow B) = P(B \mid A), \quad \text{Lift}(A \Rightarrow B) = \frac{P(B \mid A)}{P(B)}$$
+  kèm theo **Leverage** và **Conviction**, lưu trữ Top 40 luật mạnh nhất vào `dwh.fact_patient_association_rules`.
 
 ---
 

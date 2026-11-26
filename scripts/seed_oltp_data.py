@@ -131,29 +131,54 @@ def sample_wave_date(rng: random.Random) -> date:
     return start + timedelta(days=rng.randint(0, 340))
 
 
-def sample_health_status(rng: random.Random, comorbidity: str, province: str) -> str:
+def sample_health_status(
+    rng: random.Random,
+    age: int,
+    comorbidity: str,
+    max_doses: int,
+    province: str,
+) -> str:
     high_burden = province in ("TP. Hồ Chí Minh", "Bình Dương", "Đồng Nai", "Hà Nội")
     has_comorb = comorbidity != "None"
-    if high_burden and has_comorb:
+    low_vax = max_doses <= 1
+
+    # Mô phỏng tương quan dịch tễ rõ nét để khai phá Luật kết hợp (Association Rules):
+    # - Người có bệnh nền / cao tuổi + tiêm chưa đủ (<=1 mũi) có nguy cơ CONFIRMED_COVID cao vượt trội.
+    # - Người trẻ/trung niên không bệnh nền + đã tiêm nhắc lại (3 mũi) đa số HEALTHY.
+    if has_comorb and low_vax:
         options = [
-            ("HEALTHY", 0.38),
-            ("CONFIRMED_COVID", 0.28),
-            ("RECOVERED", 0.24),
-            ("SUSPECTED", 0.10),
+            ("CONFIRMED_COVID", 0.64),
+            ("SUSPECTED", 0.14),
+            ("RECOVERED", 0.12),
+            ("HEALTHY", 0.10),
         ]
-    elif high_burden or has_comorb:
+    elif (age >= 60 and has_comorb) or (low_vax and high_burden):
         options = [
-            ("HEALTHY", 0.50),
+            ("CONFIRMED_COVID", 0.48),
             ("RECOVERED", 0.22),
+            ("SUSPECTED", 0.14),
+            ("HEALTHY", 0.16),
+        ]
+    elif max_doses >= 3 and not has_comorb:
+        options = [
+            ("HEALTHY", 0.78),
+            ("RECOVERED", 0.13),
+            ("SUSPECTED", 0.05),
+            ("CONFIRMED_COVID", 0.04),
+        ]
+    elif has_comorb or high_burden:
+        options = [
+            ("HEALTHY", 0.48),
+            ("RECOVERED", 0.24),
             ("CONFIRMED_COVID", 0.18),
             ("SUSPECTED", 0.10),
         ]
     else:
         options = [
-            ("HEALTHY", 0.64),
-            ("RECOVERED", 0.18),
-            ("CONFIRMED_COVID", 0.10),
-            ("SUSPECTED", 0.08),
+            ("HEALTHY", 0.68),
+            ("RECOVERED", 0.17),
+            ("CONFIRMED_COVID", 0.08),
+            ("SUSPECTED", 0.07),
         ]
     return weighted_choice(rng, options)
 
@@ -194,7 +219,16 @@ def generate_sql_batches(patient_count: int, seed: int, batch_size: int = 250):
         birth_year = sample_birth_year(rng)
         age = max(0, reported_date.year - birth_year)
         comorbidity = sample_comorbidity(rng, age)
-        health_status = sample_health_status(rng, comorbidity, province)
+
+        # Số mũi tiêm (0 - 3 mũi)
+        if age < 12:
+            max_doses = weighted_choice(rng, [(0, 0.55), (1, 0.25), (2, 0.20)])
+        elif age >= 60 or comorbidity != "None":
+            max_doses = weighted_choice(rng, [(0, 0.14), (1, 0.18), (2, 0.33), (3, 0.35)])
+        else:
+            max_doses = weighted_choice(rng, [(0, 0.08), (1, 0.14), (2, 0.40), (3, 0.38)])
+
+        health_status = sample_health_status(rng, age, comorbidity, max_doses, province)
 
         patients.append(
             (
@@ -208,14 +242,6 @@ def generate_sql_batches(patient_count: int, seed: int, batch_size: int = 250):
                 reported_date.isoformat(),
             )
         )
-
-        # Số mũi tiêm (0 - 3 mũi, người lớn tuổi / bệnh nền ưu tiên tiêm đủ hơn)
-        if age < 12:
-            max_doses = weighted_choice(rng, [(0, 0.55), (1, 0.25), (2, 0.20)])
-        elif age >= 50 or comorbidity != "None":
-            max_doses = weighted_choice(rng, [(1, 0.08), (2, 0.37), (3, 0.55)])
-        else:
-            max_doses = weighted_choice(rng, [(0, 0.05), (1, 0.15), (2, 0.45), (3, 0.35)])
 
         primary_vaccine = weighted_choice(rng, VACCINE_WEIGHTS)
         first_vax_date = date(2021, 5, 1) + timedelta(days=rng.randint(0, 210))

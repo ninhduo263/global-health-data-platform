@@ -135,6 +135,29 @@ def fetch_dwh_snapshot() -> dict:
                 """
             )
             data["ew_importance"] = cur.fetchall()
+
+            cur.execute(
+                """
+                SELECT cluster_id, cluster_label, episode_count, avg_dwell_weeks,
+                       median_dwell_weeks, max_dwell_weeks, retention_prob_pct
+                FROM dwh.vw_cluster_dwell_time
+                WHERE model_version = 'weekly-kmeans-v1'
+                ORDER BY cluster_id
+                """
+            )
+            data["dwell_times"] = cur.fetchall()
+
+            cur.execute(
+                """
+                SELECT rule_id, antecedents, target_category_vi, support_count,
+                       support_pct, confidence_pct, lift
+                FROM dwh.vw_patient_association_rules
+                WHERE model_version = 'apriori-v1'
+                ORDER BY rule_id
+                LIMIT 8
+                """
+            )
+            data["assoc_rules"] = cur.fetchall()
     finally:
         conn.close()
     return data
@@ -885,9 +908,66 @@ def build_docx(dwh: dict, output_docx: Path) -> None:
         add_bullet_item(doc, "Kiểm chứng Ablation (loại bỏ cluster_id): ", "Khi tắt biến cluster_id (COVID_EW_INCLUDE_CLUSTER=false), XGBoost vẫn đạt ROC-AUC = 0,926, F1 = 0,355 và PR-AUC = 0,264. Điều này chứng minh kết quả mô hình hoàn toàn thực chất, không bị phồng điểm do tâm cụm K-Means, đồng thời cluster_id giúp cải thiện nhẹ độ nhạy PR-AUC từ 0,264 lên 0,270.")
 
         # ======================================================================
-        # CHƯƠNG 6
+        # CHƯƠNG 6: MARKOV TRANSITION & ASSOCIATION RULES
         # ======================================================================
-        add_heading_1(doc, "6. Hệ thống 4 Bảng Điều khiển Tiếng Việt trên Apache Superset")
+        add_heading_1(doc, "6. Bài toán Data Mining 3 & 4: Chuyển dịch Cụm Markov & Luật Kết hợp Apriori")
+        add_heading_2(doc, "6.1. Khai phá Chuỗi Chuyển dịch Cụm Markov & Thời gian Lưu trú (Dwell Time)")
+        add_body_p(
+            doc,
+            "Trên chuỗi phân cụm tuần liên tiếp của từng quốc gia, hệ thống ước lượng ma trận xác suất chuyển trạng thái Markov bậc 1 P(C_{t+1} = j | C_t = i) và thống kê độ dài các đợt lưu trú liên tục (Dwell Time) trong mỗi vùng dịch:",
+        )
+        if dwh.get("dwell_times"):
+            dwell_rows = [
+                [
+                    f"Cụm {r[0]}",
+                    str(r[1]),
+                    f"{int(r[2]):,}",
+                    f"{float(r[3]):.2f} tuần",
+                    f"{float(r[4]):.1f} tuần",
+                    f"{int(r[5])} tuần",
+                    f"{float(r[6]):.2f}%",
+                ]
+                for r in dwh["dwell_times"]
+            ]
+            add_styled_table(
+                doc,
+                headers=["Mã cụm", "Nhãn cụm dịch tễ", "Số đợt", "Lưu trú TB", "Trung vị", "Đợt dài nhất", "Xác suất giữ cụm"],
+                rows=dwell_rows,
+                col_widths_cm=[1.7, 3.9, 1.8, 2.2, 2.0, 2.3, 2.6],
+                right_align_cols={2, 3, 4, 5, 6},
+            )
+
+        add_heading_2(doc, "6.2. Khai phá Luật Kết hợp trên Hồ sơ Bệnh nhân & Tiêm chủng (Apriori / FP-Growth)")
+        add_body_p(
+            doc,
+            "Kết hợp bảng bệnh nhân ẩn danh (dwh.dim_patient) và lịch sử mũi tiêm (dwh.fact_vaccination), thuật toán Apriori khai phá các quy luật {Nhóm tuổi + Giới tính + Bệnh nền + Số mũi tiêm / Loại vắc-xin} => {Tình trạng COVID-19} có độ tin cậy (Confidence) và độ nâng (Lift) cao nhất:",
+        )
+        if dwh.get("assoc_rules"):
+            rule_rows = [
+                [
+                    str(r[0]),
+                    str(r[1]),
+                    str(r[2]),
+                    str(r[3]),
+                    f"{float(r[4]):.2f}%",
+                    f"{float(r[5]):.1f}%",
+                    f"{float(r[6]):.2f}x",
+                ]
+                for r in dwh["assoc_rules"]
+            ]
+            add_styled_table(
+                doc,
+                headers=["#", "Tổ hợp điều kiện (Vế trái)", "Kết cục (Vế phải)", "Số BN", "Support", "Confidence", "Lift"],
+                rows=rule_rows,
+                col_widths_cm=[0.9, 6.9, 3.0, 1.3, 1.5, 1.6, 1.3],
+                right_align_cols={3, 4, 5, 6},
+                highlight_row_idx=0,
+            )
+
+        # ======================================================================
+        # CHƯƠNG 7
+        # ======================================================================
+        add_heading_1(doc, "7. Hệ thống 4 Bảng Điều khiển Tiếng Việt trên Apache Superset (25 Biểu đồ)")
         add_body_p(
             doc,
             "Thông qua kịch bản tự động hóa REST API (scripts/init_superset_dashboards.py), toàn bộ 12 View trong DWH được đăng ký, gán từ điển nhãn cột tiếng Việt (verbose_name) và dựng thành 21 biểu đồ phân bổ trên 4 Dashboard chuyên đề:",

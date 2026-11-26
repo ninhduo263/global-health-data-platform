@@ -471,3 +471,79 @@ SELECT
         ELSE fi.feature_name
     END AS feature_name_vi
 FROM dwh.fact_early_warning_feature_importance AS fi;
+
+-- ============================================================================
+-- KHAI PHÁ CHUỖI CHUYỂN DỊCH CỤM (MARKOV TRANSITION MATRIX & DWELL TIME)
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS dwh.fact_cluster_transition (
+    model_version VARCHAR(40) NOT NULL,
+    from_cluster_id SMALLINT NOT NULL CHECK (from_cluster_id >= 0),
+    from_cluster_label VARCHAR(60) NOT NULL,
+    to_cluster_id SMALLINT NOT NULL CHECK (to_cluster_id >= 0),
+    to_cluster_label VARCHAR(60) NOT NULL,
+    transition_count INT NOT NULL CHECK (transition_count >= 0),
+    from_total_count INT NOT NULL CHECK (from_total_count > 0),
+    transition_probability DOUBLE PRECISION NOT NULL
+        CHECK (transition_probability BETWEEN 0 AND 1),
+    is_self_transition BOOLEAN NOT NULL DEFAULT FALSE,
+    transition_type_vi VARCHAR(40) NOT NULL,
+    computed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (model_version, from_cluster_id, to_cluster_id)
+);
+
+CREATE TABLE IF NOT EXISTS dwh.fact_cluster_dwell_time (
+    model_version VARCHAR(40) NOT NULL,
+    cluster_id SMALLINT NOT NULL CHECK (cluster_id >= 0),
+    cluster_label VARCHAR(60) NOT NULL,
+    episode_count INT NOT NULL CHECK (episode_count > 0),
+    total_weeks INT NOT NULL CHECK (total_weeks > 0),
+    avg_dwell_weeks DOUBLE PRECISION NOT NULL CHECK (avg_dwell_weeks > 0),
+    median_dwell_weeks DOUBLE PRECISION NOT NULL CHECK (median_dwell_weeks > 0),
+    max_dwell_weeks INT NOT NULL CHECK (max_dwell_weeks > 0),
+    retention_probability DOUBLE PRECISION NOT NULL
+        CHECK (retention_probability BETWEEN 0 AND 1),
+    computed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (model_version, cluster_id)
+);
+
+CREATE OR REPLACE VIEW dwh.vw_cluster_transition AS
+SELECT
+    t.*,
+    t.from_cluster_label || ' → ' || t.to_cluster_label AS transition_pair_vi,
+    ROUND((t.transition_probability * 100)::numeric, 2) AS transition_prob_pct
+FROM dwh.fact_cluster_transition AS t;
+
+CREATE OR REPLACE VIEW dwh.vw_cluster_dwell_time AS
+SELECT
+    d.*,
+    ROUND((d.retention_probability * 100)::numeric, 2) AS retention_prob_pct
+FROM dwh.fact_cluster_dwell_time AS d;
+
+-- ============================================================================
+-- KHAI PHÁ LUẬT KẾT HỢP BỆNH NHÂN & TIÊM CHỦNG (APRIORI / FP-GROWTH)
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS dwh.fact_patient_association_rules (
+    model_version VARCHAR(40) NOT NULL,
+    rule_id SMALLINT NOT NULL CHECK (rule_id > 0),
+    antecedents VARCHAR(250) NOT NULL,
+    consequent VARCHAR(120) NOT NULL,
+    rule_text_vi VARCHAR(380) NOT NULL,
+    antecedent_count SMALLINT NOT NULL CHECK (antecedent_count > 0),
+    support_count INT NOT NULL CHECK (support_count > 0),
+    total_transactions INT NOT NULL CHECK (total_transactions > 0),
+    support DOUBLE PRECISION NOT NULL CHECK (support BETWEEN 0 AND 1),
+    confidence DOUBLE PRECISION NOT NULL CHECK (confidence BETWEEN 0 AND 1),
+    lift DOUBLE PRECISION NOT NULL CHECK (lift >= 0),
+    leverage DOUBLE PRECISION NOT NULL,
+    conviction DOUBLE PRECISION NOT NULL,
+    target_category_vi VARCHAR(60) NOT NULL,
+    computed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (model_version, rule_id)
+);
+
+CREATE OR REPLACE VIEW dwh.vw_patient_association_rules AS
+SELECT
+    r.*,
+    ROUND((r.support * 100)::numeric, 2) AS support_pct,
+    ROUND((r.confidence * 100)::numeric, 2) AS confidence_pct
+FROM dwh.fact_patient_association_rules AS r;

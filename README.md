@@ -83,23 +83,24 @@ python .\scripts\init_superset_dashboards.py
 .\scripts\init_superset_dashboards.ps1
 ```
 
-Script tự động đăng ký, đồng bộ cột và Việt hóa nhãn hiển thị (`verbose_name`) cho toàn bộ **12 Dataset Views** trong schema `dwh`, cập nhật **21 biểu đồ** và xuất bản **4 Dashboard tiếng Việt hoàn chỉnh**:
+Script tự động đăng ký, đồng bộ cột và Việt hóa nhãn hiển thị (`verbose_name`) cho toàn bộ **15 Dataset Views** trong schema `dwh`, cập nhật **25 biểu đồ** và xuất bản **4 Dashboard tiếng Việt hoàn chỉnh**:
 
 1. **Tổng quan Phân cụm Dịch tễ COVID-19 Toàn cầu (4 Nhóm Xu hướng)**  
    `http://localhost:8089/superset/dashboard/covid19-kmeans-clusters/`
-2. **Phân tích Phân cụm Dịch tễ COVID-19 — Đánh giá Số cụm K & Hồ sơ Cụm**  
+2. **Phân tích Phân cụm Dịch tễ COVID-19 — Đánh giá Số cụm K, PCA & Chuyển cụm Markov**  
    `http://localhost:8089/superset/dashboard/covid19-kmeans-mining/`
    - `vw_kmeans_evaluation` — biểu đồ **Độ phân tán nội cụm theo K (Phương pháp Khuỷu tay)** và **Độ tách biệt Cụm (Silhouette & Davies–Bouldin)**.
    - `vw_weekly_covid_clusters` — **Bản đồ Phân bố Cụm trên Không gian 2 Chiều (PCA)** và đường diễn biến ca mắc theo cụm.
-   - `vw_kmeans_cluster_profile` — biểu đồ tỉ trọng và bảng hồ sơ cụm tự sinh nhãn tiếng Việt.
+   - `vw_kmeans_cluster_profile`, `vw_cluster_transition`, `vw_cluster_dwell_time` — hồ sơ cụm, **Ma trận xác suất chuyển dịch cụm Markov (%)** và **Bảng thời gian lưu trú liên tục (Dwell Time)**.
 3. **Hệ thống Cảnh báo Sớm Nguy cơ Bùng phát Dịch COVID-19 (Dự báo trước 2 Tuần)**  
    `http://localhost:8089/superset/dashboard/covid19-early-warning/`
    - `vw_early_warning_latest` — **Bản đồ Thế giới** xác suất bùng phát 2 tuần tới, biểu đồ tỷ lệ `Nguy cơ cao / Cần theo dõi / Nguy cơ thấp` và bảng xếp hạng quốc gia.
    - `vw_early_warning_evaluation` — đối sánh độ chính xác giữa `XGBoost (Cây tăng cường)`, `Hồi quy Logistic` và `Luật cơ sở (Tăng ≥ 25%)`.
    - `vw_early_warning_feature_importance` — 10 yếu tố ảnh hưởng lớn nhất đến nguy cơ bùng phát dịch.
-4. **Giám sát Thời gian thực — Hồ sơ Bệnh nhân Ẩn danh & Tiêm chủng Nội bộ**  
+4. **Giám sát Thời gian thực & Khai phá Luật Kết hợp — Bệnh nhân Ẩn danh & Tiêm chủng**  
    `http://localhost:8089/superset/dashboard/covid19-cdc-patients-vaccination/`
-   - `vw_dashboard_patients`, `vw_dashboard_vaccinations`, `vw_vaccination_by_patient` — KPI tổng bệnh nhân/mũi tiêm, phân bố sức khỏe theo nhóm tuổi, cơ cấu bệnh nền, số lượt tiêm theo vắc-xin & độ tuổi và thống kê theo tỉnh/thành.
+   - `vw_dashboard_patients`, `vw_dashboard_vaccinations`, `vw_vaccination_by_patient` — KPI thời gian thực, phân bố sức khỏe theo nhóm tuổi, cơ cấu bệnh nền, số lượt tiêm theo vắc-xin & độ tuổi và thống kê theo tỉnh/thành.
+   - `vw_patient_association_rules` — **Top 10 Luật kết hợp dịch tễ có Độ nâng (Lift) cao nhất** và **Bảng khai phá luật kết hợp Apriori / FP-Growth**.
 
 ## 6. Kiểm tra & Chạy Unit Test
 

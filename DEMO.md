@@ -87,18 +87,28 @@ Luồng trình bày xuyên suốt: **Thu thập đa nguồn (OWID/WHO/MySQL) →
 
 ---
 
-## 5. Minh họa CDC Thời gian thực & Ẩn danh hóa Bệnh nhân | 2 phút
+## 5. Minh họa CDC Realtime, Phát hiện Ổ dịch Kafka & Cổng Web AI Tương tác | 3 phút
 
 **Thao tác:**
 1. Mở **Tab 6 (`Giám sát Thời gian thực — Hồ sơ Bệnh nhân Ẩn danh & Tiêm chủng Nội bộ`)**, ghi nhớ con số trên thẻ **Tổng số Hồ sơ Bệnh nhân Đã Đồng bộ Ẩn danh** và **Tổng số Mũi tiêm**.
-2. Mở cửa sổ PowerShell, chạy lệnh phát sinh giao dịch thật trực tiếp vào MySQL OLTP:
+2. Mở cửa sổ PowerShell, chạy lệnh phát sinh giao dịch thật + giả lập ổ dịch bùng phát tức thời vào MySQL OLTP:
    ```powershell
+   # 1) Đồng bộ CDC + Ẩn danh hóa bệnh nhân mới (< 2 giây)
    .\scripts\demo_cdc.ps1 -Count 2
+
+   # 2) Bơm burst 12 ca dương tính tại Hà Nội -> Kafka Streaming Outbreak Detector tự bắn cảnh báo (< 3 giây)
+   .\scripts\demo_realtime_outbreak.ps1 -Province "Hà Nội" -BurstCount 12
    ```
-3. Cho hội đồng thấy kết quả trên PowerShell xuất hiện trong PostgreSQL DWH chỉ sau ~2 giây (không có `full_name` và `citizen_hash`), sau đó bấm **Refresh** trên Tab 6 Superset để thấy tổng số bệnh nhân và mũi tiêm tăng lên ngay lập tức!
+3. Cho hội đồng thấy kết quả trên PowerShell xuất hiện trong PostgreSQL DWH (`dwh.dim_patient` không có `full_name`/`citizen_hash`, `dwh.fact_realtime_anomalies` ghi nhận `Z-score` vượt ngưỡng với mức `CẢNH BÁO CAO`), sau đó bấm **Refresh** trên Tab 6 Superset để thấy số liệu tăng ngay lập tức!
+4. Mở trình duyệt sang **Cổng Web AI Tương tác Streamlit** tại `http://localhost:8501` để cho hội đồng tự trải nghiệm trực tiếp 4 tab:
+   - **Tab 1 — Mô phỏng Kịch bản What-If (XGBoost + TreeSHAP):** Kéo thanh trượt tỷ lệ tiêm chủng, ca mắc tuần hiện tại, vận tốc lây nhiễm → bấm chạy trực tiếp trên mô hình `early_warning_model.pkl` để xem xác suất bùng phát thay đổi tức thì kèm **biểu đồ Waterfall TreeSHAP** giải thích từng yếu tố kéo tăng/giảm nguy cơ.
+   - **Tab 2 — Đánh giá Rủi ro Bệnh nhân (Luật kết hợp Apriori):** Chọn nhóm tuổi, bệnh nền, trạng thái tiêm chủng → so khớp ngay với bảng luật `dwh.fact_patient_association_rules` (Support, Confidence, Lift).
+   - **Tab 3 — Quỹ đạo Dịch & Dự báo Markov ($P^k$):** Chọn bất kỳ quốc gia nào (vd. Việt Nam, Mỹ, Ấn Độ) để xem chuỗi chuyển cụm theo thời gian và phân phối xác suất sau $k$ tuần bằng lũy thừa ma trận Markov.
+   - **Tab 4 — Bất thường Lịch sử (Isolation Forest) & Ổ dịch Thời gian thực (Kafka):** Xem ngay cảnh báo ổ dịch Hà Nội vừa tạo từ lệnh PowerShell và 1.130 tuần bất thường lịch sử toàn cầu.
 
 **Lời dẫn gợi ý:**
-> "Cuối cùng là luồng đồng bộ thời gian thực phục vụ dữ liệu vận hành nội bộ. Khi phát sinh 2 bệnh nhân và 2 mũi tiêm mới trong MySQL OLTP, Debezium đọc binlog đẩy qua Kafka và `cdc-consumer` cập nhật vào `dwh.dim_patient` cùng `dwh.fact_vaccination` trong chưa đầy 2 giây. Dữ liệu định danh nhạy cảm như họ tên và mã công dân được lọc bỏ hoàn toàn trước khi vào DWH, chỉ giữ lại năm sinh, giới tính, tỉnh thành và bệnh nền để phân tích dịch tễ an toàn."
+> "Không chỉ dừng lại ở dashboard báo cáo tĩnh, hệ thống còn tích hợp luồng **CDC thời gian thực kết hợp phát hiện ổ dịch trực tuyến (Streaming Outbreak Detector)** ngay trên Kafka: khi Hà Nội đột ngột ghi nhận cụm ca dương tính trong cửa sổ trượt, hệ thống tính Z-score và ghi cảnh báo vào DWH trong chưa đầy 3 giây, đồng thời vẫn ẩn danh hoàn toàn PII của bệnh nhân.  
+> Đặc biệt, với **Cổng Web AI Tương tác (Streamlit)** tại cổng `8501`, giảng viên và chuyên gia dịch tễ có thể tự thay đổi giả định đầu vào (What-If) để chạy suy luận trực tiếp trên mô hình XGBoost thật kèm giải thích cục bộ **TreeSHAP** cho từng yếu tố."
 
 ---
 
@@ -108,6 +118,8 @@ Luồng trình bày xuyên suốt: **Thu thập đa nguồn (OWID/WHO/MySQL) →
   **Đáp:** Nhóm đã kiểm chứng bằng thực nghiệm **Ablation** (`COVID_EW_INCLUDE_CLUSTER=false`). Khi bỏ hoàn toàn `cluster_id`, XGBoost vẫn đạt `ROC-AUC = 0,926`, `F1 = 0,355`, `PR-AUC = 0,264` (so với `0,270` khi có `cluster_id`). Điều này chứng minh mô hình không hề bị phồng điểm ảo, và `cluster_id` đóng góp thêm tín hiệu phân tầng hợp lệ.
 - **Hỏi: Vì sao PR-AUC (`0,270`) thấp hơn nhiều so với ROC-AUC (`0,925`)?**  
   **Đáp:** Tập test nằm ở giai đoạn cuối (từ cuối 2023 sang 2024), khi phần lớn quốc gia đã qua đỉnh đại dịch và giảm tần suất báo cáo nên tỷ lệ tuần bùng phát thực sự (lớp dương) rất hiếm. Với dữ liệu mất cân bằng mạnh, PR-AUC luôn khắt khe hơn ROC-AUC; việc XGBoost đạt `PR-AUC = 0,270` so với baseline ngẫu nhiên/luật cơ sở (`0,070`) thể hiện khả năng cô lập nguy cơ cao gấp ~4 lần.
+- **Hỏi: Mô hình XGBoost bị coi là hộp đen (black-box), làm sao bác sĩ/nhà quản lý tin tưởng cảnh báo của từng quốc gia?**  
+  **Đáp:** Bên cạnh Feature Importance toàn cục, nhóm tích hợp **TreeSHAP cục bộ** (`pred_contribs=True` chuẩn xác trên cây quyết định XGBoost) để xuất cột `top_reasons_vi` giải thích trực tiếp 3 yếu tố đóng góp mạnh nhất cho từng quốc gia, đồng thời cho phép kiểm chứng trực quan bằng biểu đồ Waterfall ngay trên Cổng AI Streamlit.
 - **Hỏi: Nếu mũi tiêm trên Kafka đến trước bản ghi bệnh nhân thì sao?**  
   **Đáp:** Do `patients` và `vaccination_records` nằm ở 2 topic Kafka độc lập nên thứ tự không được đảm bảo giữa các bảng. Consumer xử lý bằng cơ chế **Placeholder Dimension** (`is_placeholder = TRUE`) để không làm gãy khóa ngoại `fact_vaccination.patient_id`, sau đó khi event bệnh nhân tới sẽ tự động `ON CONFLICT DO UPDATE` ghi đè đầy đủ thuộc tính và đổi `is_placeholder = FALSE`.
 
@@ -116,10 +128,11 @@ Luồng trình bày xuyên suốt: **Thu thập đa nguồn (OWID/WHO/MySQL) →
 ## Phụ lục: Các lệnh kiểm tra nhanh khi cần
 
 ```powershell
-# Kiểm tra trạng thái connector CDC v2
+# Kiểm tra trạng thái connector CDC v2 & Cổng AI Streamlit
 curl.exe http://localhost:8083/connectors/vaccination-oltp-connector-v2/status
+curl.exe http://localhost:8501/_stcore/health
 
-# Chạy toàn bộ 10 unit test CDC + 13 unit test ML (K-Means & XGBoost)
+# Chạy toàn bộ 11 unit test CDC (kèm Streaming Outbreak) + 17 unit test ML (K-Means, XGBoost, Markov, Apriori, Isolation Forest)
 python -m unittest discover -s cdc -p "test_*.py" -v
 docker exec -i airflow-scheduler python -m unittest discover -s /opt/airflow/tests -v
 

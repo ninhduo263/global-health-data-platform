@@ -17,13 +17,14 @@ Hệ thống được xây dựng nhằm giải quyết trọn vẹn bài toán 
 3. **Phân cụm xu hướng dịch tễ không giám sát (Unsupervised Clustering — K-Means nâng cao)**: Tự động kiểm định số cụm tối ưu $K$, giải mã tâm cụm để sinh nhãn nghiệp vụ tiếng Việt và giảm chiều bằng **PCA** để trực quan hóa.
 4. **Cảnh báo sớm bùng phát dịch có giám sát (Supervised Classification — XGBoost)**: Dự báo trước **2 tuần** nguy cơ bùng phát dịch tại từng quốc gia với cơ chế chia tập thời gian chống rò rỉ dữ liệu (**Purged Time-Series Split**).
 5. **Khai phá Chuỗi chuyển dịch cụm (Markov Transition Matrix & Dwell Time) & Luật kết hợp (Association Rule Mining — Apriori / FP-Growth)**: Định lượng xác suất chuyển trạng thái dịch giữa các tuần, thời gian lưu trú trung bình tại từng vùng dịch và phát hiện các tổ hợp `{Nhóm tuổi + Bệnh nền + Tiêm chủng} ⇒ {Tình trạng COVID-19}` có độ nâng (`Lift`) cao.
-6. **Trực quan hóa tự động 100% tiếng Việt trên Apache Superset**: Cung cấp 15 Dataset, 25 biểu đồ và 4 bảng điều khiển chuyên đề phục vụ ra quyết định.
+6. **Phát hiện Bất thường Kép (Isolation Forest Lịch sử + Kafka Streaming Realtime) & Giải thích Cục bộ TreeSHAP**: Tự động gắn cờ 1.130 tuần bất thường toàn cầu, phát hiện ổ dịch cục bộ trên Kafka CDC trong < 3 giây (`Z-score`) và giải thích 3 yếu tố quyết định cảnh báo cho từng quốc gia (`top_reasons_vi`).
+7. **Trực quan hóa BI & Cổng AI Tương tác 100% tiếng Việt**: 4 Dashboard Superset (17 Datasets, 26 biểu đồ) kết hợp **Cổng Web AI Streamlit (`http://localhost:8501`)** cho phép mô phỏng What-If trực tiếp trên mô hình XGBoost thật.
 
 ---
 
 ## 2. Kiến trúc Tổng thể Hệ thống
 
-Hệ thống vận hành hoàn toàn trên nền tảng container hóa (**Docker Compose** gồm 10 dịch vụ), chia làm 5 tầng rõ rệt:
+Hệ thống vận hành hoàn toàn trên nền tảng container hóa (**Docker Compose** gồm 11 dịch vụ), chia làm 5 tầng rõ rệt:
 
 ```mermaid
 flowchart LR
@@ -37,7 +38,7 @@ flowchart LR
         AF["Apache Airflow 2.9<br/>(DAG: health_data_pipeline)"]
         DBZ["Debezium Connect 2.5<br/>(Đọc MySQL Binlog)"]
         KFK["Apache Kafka + ZooKeeper<br/>(3 Topics CDC)"]
-        CDC["Python CDC Consumer<br/>(Ẩn danh PII & Upsert)"]
+        CDC["Python CDC Consumer<br/>(Ẩn danh PII + Outbreak Z-score)"]
     end
 
     subgraph Storage["3. Tầng Lưu trữ (Lake & DWH)"]
@@ -45,13 +46,15 @@ flowchart LR
         DWH[("PostgreSQL 15 DWH<br/>(Schema: dwh - Snowflake)")]
     end
 
-    subgraph Mining["4. Tầng Khai phá Dữ liệu"]
-        KM["K-Means Clustering<br/>(Elbow, Silhouette, PCA 2D)"]
-        XGB["Early Warning XGBoost<br/>(Dự báo trước H = 2 tuần)"]
+    subgraph Mining["4. Tầng Khai phá Dữ liệu (5 Trụ cột)"]
+        KM["K-Means + PCA 2D<br/>& Chuỗi Markov"]
+        XGB["Early Warning XGBoost<br/>+ TreeSHAP (H = 2 tuần)"]
+        APR["Apriori Luật kết hợp<br/>& Isolation Forest"]
     end
 
-    subgraph BI["5. Tầng Trực quan hóa BI"]
-        SUP["Apache Superset 3.1<br/>(4 Dashboard Tiếng Việt)"]
+    subgraph BI["5. Tầng BI & Cổng AI Tương tác"]
+        SUP["Apache Superset 3.1<br/>(4 Dashboard, 26 Biểu đồ)"]
+        PORTAL["Streamlit AI Portal (:8501)<br/>(What-If, TreeSHAP, Markov)"]
     end
 
     OWID --> AF
@@ -64,14 +67,17 @@ flowchart LR
     OLTP == "Binlog Row-level" ==> DBZ
     DBZ ==> KFK
     KFK ==> CDC
-    CDC == "Upsert Idempotent" ==> DWH
+    CDC == "Upsert Idempotent & Cảnh báo Ổ dịch" ==> DWH
 
     DWH --> KM
-    KM -- "Ghi cụm, hồ sơ & PCA" --> DWH
+    KM -- "Ghi cụm, Markov & PCA" --> DWH
     DWH --> XGB
-    XGB -- "Ghi cảnh báo & đánh giá" --> DWH
+    XGB -- "Ghi cảnh báo, TreeSHAP & .pkl" --> DWH
+    DWH --> APR
+    APR -- "Ghi luật Apriori & Bất thường" --> DWH
 
     DWH --> SUP
+    DWH --> PORTAL
 ```
 
 ### Vai trò từng thành phần công nghệ
@@ -79,11 +85,12 @@ flowchart LR
 | Tầng | Công nghệ | Vai trò chính trong dự án |
 | :--- | :--- | :--- |
 | **CSDL Giao dịch (OLTP)** | `MySQL 8.0` | Lưu trữ dữ liệu vận hành nội bộ (`vaccination_centers`, `patients`, `vaccination_records`), bật `binlog` chế độ `ROW`. |
-| **Streaming CDC** | `Debezium` + `Kafka` + `Python` | Bắt biến động `INSERT/UPDATE/DELETE` theo thời gian thực (< 2 giây), ẩn danh bệnh nhân và đồng bộ sang DWH đảm bảo tính idempotent. |
+| **Streaming CDC & Outbreak** | `Debezium` + `Kafka` + `Python` | Bắt biến động `INSERT/UPDATE/DELETE` theo thời gian thực (< 2 giây), ẩn danh PII bệnh nhân, đồng thời chạy **Streaming Outbreak Detector** (sliding window Z-score) phát hiện ổ dịch cục bộ ghi vào `dwh.fact_realtime_anomalies` trong < 3 giây. |
 | **Data Lake** | `MinIO` (chuẩn S3) | Lưu trữ dữ liệu thô (`Landing Zone`) phân vùng theo nguồn và ngày chạy (`raw/owid/`, `raw/who/`, `raw/oltp/`) phục vụ đối soát và chạy lại. |
-| **Điều phối ETL & ML** | `Apache Airflow 2.9` | Tự động hóa chuỗi tác vụ từ tải dữ liệu, nạp DWH đến huấn luyện K-Means và XGBoost theo lịch `@daily`. |
-| **Data Warehouse** | `PostgreSQL 15` | Lưu trữ kho dữ liệu phân tích theo lược đồ **Snowflake Schema** kết hợp các bảng lưu kết quả/chỉ số đánh giá mô hình học máy. |
-| **Business Intelligence** | `Apache Superset 3.1` | Hiển thị 4 Dashboard tiếng Việt (21 biểu đồ), khởi tạo tự động qua REST API (`scripts/init_superset_dashboards.py`). |
+| **Điều phối ETL & ML** | `Apache Airflow 2.9` | Tự động hóa chuỗi tác vụ ETL + 5 bài toán Khai phá Dữ liệu (K-Means + PCA, Markov, XGBoost + TreeSHAP, Apriori, Isolation Forest) theo lịch `@daily`. |
+| **Data Warehouse** | `PostgreSQL 15` | Lưu trữ kho dữ liệu phân tích theo lược đồ **Snowflake Schema** kết hợp các bảng/view kết quả khai phá dữ liệu và kiểm định mô hình. |
+| **Business Intelligence** | `Apache Superset 3.1` | Hiển thị 4 Dashboard tiếng Việt (17 Datasets, 26 biểu đồ), khởi tạo tự động qua REST API (`scripts/init_superset_dashboards.py`). |
+| **Cổng AI Tương tác** | `Streamlit` (`ai-portal`, cổng `8501`) | Ứng dụng web 4 tab tiếng Việt cho phép mô phỏng kịch bản What-If trực tiếp trên mô hình XGBoost thật + Waterfall TreeSHAP, tra cứu luật Apriori, dự báo Markov $P^k$ và giám sát bất thường kép. |
 
 ---
 
@@ -232,6 +239,15 @@ erDiagram
 - **Các độ đo đánh giá luật $A \Rightarrow B$**:
   $$\text{Support}(A \Rightarrow B) = P(A \cup B), \quad \text{Confidence}(A \Rightarrow B) = P(B \mid A), \quad \text{Lift}(A \Rightarrow B) = \frac{P(B \mid A)}{P(B)}$$
   kèm theo **Leverage** và **Conviction**, lưu trữ Top 40 luật mạnh nhất vào `dwh.fact_patient_association_rules`.
+
+---
+
+### 4.5. Bài toán 5: Phát hiện Bất thường (Isolation Forest + Kafka Realtime) & Giải thích TreeSHAP
+*(Mã nguồn: `airflow/dags/covid_anomaly_detection.py`, `cdc/consumer.py`, `portal/app.py`)*
+
+- **Isolation Forest trên 56.477 tuần–quốc gia**: Phát hiện **1.130 tuần bất thường** dựa trên 5 đặc trưng (`log_cases`, `log_deaths`, `case_z_score`, `death_z_score`, `cfr_weekly`), tự động phân loại thành 3 nhóm: *Nhiễu dồn / hiệu chỉnh báo cáo* (`570`), *Tử vong tăng dị thường* (`532`) và *Đột biến ca mắc cục bộ* (`28`), lưu tại `dwh.fact_covid_anomalies`.
+- **Phát hiện Ổ dịch Realtime trên Kafka CDC**: Lớp `StreamingOutbreakDetector` giám sát cửa sổ trượt `300s` các sự kiện `CONFIRMED_COVID` trực tuyến theo từng tỉnh/thành; khi vượt ngưỡng bùng phát tự động ghi cảnh báo đỏ kèm `Z-score` vào `dwh.fact_realtime_anomalies` và kích hoạt biểu ngữ trên Cổng AI (`http://localhost:8501`).
+- **Giải thích Cục bộ TreeSHAP (`top_reasons_vi`)**: Sử dụng `pred_contribs=True` tích hợp sẵn của XGBoost để sinh tự động 3 nguyên nhân hàng đầu giải thích xác suất cảnh báo của từng quốc gia và vẽ biểu đồ tương tác khi kéo thanh trượt What-If trên **Streamlit AI Portal**.
 
 ---
 

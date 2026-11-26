@@ -262,9 +262,33 @@ def find_paragraph_by_prefix(doc: Document, prefix: str, start_idx: int = 0):
 def update_baocao_docx(figs: dict[str, Path]) -> None:
     doc = Document(str(BAOCAO_DOCX))
 
-    # Tránh chèn trùng nếu đã chạy trước đó
+    # Nếu đã có 6.11–6.14 nhưng chưa có 6.15 (Isolation Forest + TreeSHAP + AI Portal), bổ sung phần nâng cấp v3
     if any("6.11. Nâng cấp K-Means" in p.text for p in doc.paragraphs):
-        print("[!] baocao-datamining.docx đã được cập nhật các mục 6.11–6.14 trước đó, bỏ qua chèn lặp.")
+        if any("6.15. Phát hiện Bất thường" in p.text for p in doc.paragraphs):
+            print("[!] baocao-datamining.docx đã có đầy đủ đến mục 6.15 và 7.7.")
+            return
+
+        _, ch7 = find_paragraph_by_prefix(doc, "CHƯƠNG 7:", start_idx=120)
+        if ch7 is not None:
+            insert_h2_before(ch7, "6.15. Phát hiện Bất thường Kép (Isolation Forest + Kafka Realtime) & Giải thích TreeSHAP")
+            insert_body_before(
+                ch7,
+                "Hoàn thiện trụ cột thứ 5 của Khai phá dữ liệu, hệ thống bổ sung đồng thời hai cơ chế phát hiện bất thường (Batch và Streaming) kết hợp giải thích mô hình cục bộ TreeSHAP cho từng quốc gia:",
+            )
+            insert_bullet_before(ch7, "Phát hiện bất thường lịch sử bằng Isolation Forest (airflow/dags/covid_anomaly_detection.py): ", "Phân tích 5 đặc trưng dịch tễ (log_cases, log_deaths, case_z_score, death_z_score, cfr_weekly) trên 56.477 quan sát, phát hiện 1.130 tuần bất thường gồm: Nhiễu dồn/hiệu chỉnh báo cáo (570), Tử vong tăng dị thường (532) và Đột biến ca mắc cục bộ (28), lưu tại dwh.fact_covid_anomalies.")
+            insert_bullet_before(ch7, "Phát hiện ổ dịch thời gian thực trên Kafka CDC (cdc/consumer.py): ", "Lớp StreamingOutbreakDetector theo dõi cửa sổ trượt 300s các ca CONFIRMED_COVID theo tỉnh; thử nghiệm mô phỏng ổ dịch tại Hà Nội kích hoạt cảnh báo đỏ sau < 3 giây (Z-score = 4,95) vào dwh.fact_realtime_anomalies.")
+            insert_bullet_before(ch7, "Giải thích cục bộ TreeSHAP (top_reasons_vi): ", "Tính đóng góp SHAP chính xác bằng pred_contribs=True của XGBoost cho từng quốc gia (VD: Romania 85,8% do Tốc độ tăng 2 tuần +0,58 và Tốc độ tăng 1 tuần +0,54), hiển thị trực tiếp trên Dashboard 3 Superset và AI Portal.")
+
+        _, ch8 = find_paragraph_by_prefix(doc, "CHƯƠNG 8:", start_idx=120)
+        if ch8 is not None:
+            insert_h2_before(ch8, "7.7. Cổng Web Tương tác AI & Mô phỏng Kịch bản What-If (Streamlit Portal — Port 8501)")
+            insert_body_before(
+                ch8,
+                "Bổ trợ cho 4 Dashboard BI trên Superset (đã mở rộng lên 17 Datasets và 26 biểu đồ tiếng Việt), nhóm triển khai container thứ 11 (ai-portal, portal/app.py) tại http://localhost:8501 gồm 4 phân hệ tương tác trực tiếp: (1) Mô phỏng What-If trên mô hình XGBoost thật kèm biểu đồ giải thích TreeSHAP; (2) Tra cứu nguy cơ bệnh nhân khớp trực tiếp tập luật Apriori; (3) Quỹ đạo quốc gia kèm điểm bất thường Isolation Forest & dự phóng Markov P^k; (4) Giám sát biểu ngữ cảnh báo ổ dịch thời gian thực từ Kafka CDC. Tổng bộ kiểm thử đơn vị tự động nâng lên 28/28 Unit Tests PASS (11 CDC + 17 ML).",
+            )
+
+        doc.save(str(BAOCAO_DOCX))
+        print(f"[+] Đã bổ sung mục 6.15 & 7.7 vào baocao-datamining.docx ({BAOCAO_DOCX.stat().st_size:,} bytes)")
         return
 
     # 1. Cập nhật Mục lục (các dòng Normal trong đoạn 0..111)
@@ -612,8 +636,44 @@ def update_slide_pptx(figs: dict[str, Path]) -> None:
     all_texts = " ".join(
         sh.text for sl in prs.slides for sh in sl.shapes if sh.has_text_frame
     )
-    if "Purged Time Split" in all_texts and "Luật Kết hợp" in all_texts:
-        print("[!] slide-datamining.pptx đã được cập nhật 4 slide mở rộng trước đó, bỏ qua chèn lặp.")
+    if "Purged Split" in all_texts and "Luật Kết hợp" in all_texts:
+        if "Cổng Web AI Tương tác" in all_texts:
+            print("[!] slide-datamining.pptx đã có đầy đủ 22 slides (gồm AI Portal + Isolation Forest).")
+            return
+
+        # Thêm Slide mới về Isolation Forest, TreeSHAP, Kafka Realtime Anomaly & Streamlit AI Portal
+        orig_n = len(prs.slides)
+        s_ai = _add_styled_slide_base(
+            prs,
+            "Phát hiện Bất thường (Isolation Forest + Kafka Realtime) & Cổng Web AI Tương tác",
+        )
+        _add_white_card(
+            s_ai, 0.6, 1.55, 5.9, 5.45,
+            "1. Phát hiện Bất thường Kép & Giải thích TreeSHAP",
+            [
+                "Isolation Forest (Batch): Quét 56.477 tuần–quốc gia, gắn cờ 1.130 điểm bất thường — Nhiễu dồn báo cáo (570), Tử vong tăng dị thường (532), Đột biến ca mắc cục bộ (28).",
+                "Kafka Streaming Anomaly (Realtime): Giám sát cửa sổ trượt 300s các ca CONFIRMED_COVID theo tỉnh; mô phỏng ổ dịch Hà Nội phát cảnh báo đỏ trong < 3 giây (Z-score = 4,95).",
+                "TreeSHAP cục bộ (top_reasons_vi): Tự động giải thích 3 yếu tố quyết định cảnh báo cho từng quốc gia (VD: Romania 85,8% do Tốc độ tăng 2 tuần +0,58 & 1 tuần +0,54).",
+                "Tổng bộ kiểm thử tự động đạt 28/28 Unit Tests PASS (11 CDC + 17 ML).",
+            ],
+            accent_rgb=PptRGB(0xB9, 0x1C, 0x1C),
+        )
+        _add_white_card(
+            s_ai, 6.83, 1.55, 5.9, 5.45,
+            "2. Cổng Web AI Tương tác Streamlit (http://localhost:8501)",
+            [
+                "Container thứ 11 (ai-portal) cho phép hội đồng tương tác trực tiếp với mô hình học máy thật:",
+                "Tab 1 — Mô phỏng What-If XGBoost + TreeSHAP: Kéo thanh trượt vắc-xin/tốc độ tăng ca để xem xác suất bùng phát & biểu đồ SHAP thay đổi tức thì.",
+                "Tab 2 — Tra cứu Nguy cơ Bệnh nhân (Apriori): Nhập tuổi, bệnh nền, số mũi tiêm để khớp luật nguy cơ & khuyến nghị tiêm nhắc lại.",
+                "Tab 3 — Quỹ đạo Quốc gia & Dự phóng Markov P^k (1–16 tuần) kèm dấu X bất thường Isolation Forest.",
+                "Tab 4 — Biểu ngữ báo động đỏ Realtime từ Kafka CDC & bảng bất thường toàn cầu.",
+            ],
+            accent_rgb=PptRGB(0x0F, 0x76, 0x6E),
+        )
+        # Đặt ngay sau Slide 17 (index 16) -> vị trí index 17 (trước slide Superset)
+        _move_slide(prs, orig_n, 17)
+        prs.save(str(SLIDE_PPTX))
+        print(f"[+] Đã bổ sung Slide 18 (AI Portal + Isolation Forest + Kafka Anomaly) vào slide-datamining.pptx ({len(prs.slides)} slides)")
         return
 
     orig_count = len(prs.slides)  # 17 slides

@@ -678,7 +678,7 @@ def build_docx(dwh: dict, output_docx: Path) -> None:
             ["Hồ sơ bệnh nhân nội bộ đã đồng bộ ẩn danh", f"{counts['patients']:,} bệnh nhân", "MySQL OLTP → Debezium → Kafka → dim_patient"],
             ["Lượt tiêm chủng nội bộ đồng bộ thời gian thực", f"{counts['vaccinations']:,} mũi tiêm", "MySQL OLTP → Debezium → Kafka → fact_vaccination"],
             ["Độ chính xác Cảnh báo sớm bùng phát (XGBoost)", "ROC-AUC = 0,925 | PR-AUC = 0,270", "Kiểm thử độc lập 11.006 dòng (Purged Time Split)"],
-            ["Hệ thống kiểm thử tự động & trực quan hóa", "23/23 Unit Tests | 4 Dashboards", "21 biểu đồ tiếng Việt khởi tạo tự động qua API"],
+            ["Hệ thống kiểm thử tự động & trực quan hóa", "28/28 Unit Tests | 4 Dashboards + AI Portal", "26 biểu đồ Superset + Cổng Web Streamlit (:8501)"],
         ],
         col_widths_cm=[6.5, 4.2, 5.8],
     )
@@ -967,35 +967,40 @@ def build_docx(dwh: dict, output_docx: Path) -> None:
         # ======================================================================
         # CHƯƠNG 7
         # ======================================================================
-        add_heading_1(doc, "7. Hệ thống 4 Bảng Điều khiển Tiếng Việt trên Apache Superset (25 Biểu đồ)")
+        add_heading_1(doc, "7. Phát hiện Bất thường (Isolation Forest + Kafka Realtime) & Cổng AI Tương tác")
+        add_bullet_item(doc, "Isolation Forest (1.130 tuần bất thường): ", "Quét toàn bộ 56.477 tuần–quốc gia và phân loại 3 nhóm: Nhiễu dồn/hiệu chỉnh báo cáo (570), Tử vong tăng dị thường (532) và Đột biến ca mắc cục bộ (28) vào dwh.fact_covid_anomalies.")
+        add_bullet_item(doc, "Cảnh báo Ổ dịch Thời gian thực trên Kafka CDC: ", "StreamingOutbreakDetector giám sát cửa sổ trượt 300s các ca CONFIRMED_COVID theo tỉnh; khi phát hiện đợt bùng phát cục bộ (VD: Hà Nội Z-score = 4,95) lập tức ghi vào dwh.fact_realtime_anomalies trong < 3 giây.")
+        add_bullet_item(doc, "Giải thích Cục bộ TreeSHAP & Cổng Web Streamlit (http://localhost:8501): ", "Cung cấp 4 tab tương tác trực tiếp: Mô phỏng What-If trên mô hình XGBoost thật kèm biểu đồ TreeSHAP, Tra cứu nguy cơ bệnh nhân theo luật Apriori, Quỹ đạo quốc gia + dự phóng Markov P^k và Giám sát ổ dịch realtime.")
+
+        add_heading_1(doc, "8. Hệ thống 4 Bảng Điều khiển Tiếng Việt trên Apache Superset (26 Biểu đồ)")
         add_body_p(
             doc,
-            "Thông qua kịch bản tự động hóa REST API (scripts/init_superset_dashboards.py), toàn bộ 12 View trong DWH được đăng ký, gán từ điển nhãn cột tiếng Việt (verbose_name) và dựng thành 21 biểu đồ phân bổ trên 4 Dashboard chuyên đề:",
+            "Thông qua kịch bản tự động hóa REST API (scripts/init_superset_dashboards.py), toàn bộ 17 Dataset/View trong DWH được đăng ký, gán từ điển nhãn cột tiếng Việt (verbose_name) và dựng thành 26 biểu đồ phân bổ trên 4 Dashboard chuyên đề:",
         )
         add_styled_table(
             doc,
             headers=["STT", "Tên Bảng điều khiển (Dashboard Tiếng Việt)", "Đường dẫn (Slug)", "Số biểu đồ & Nội dung chính"],
             rows=[
                 ["1", "Tổng quan Phân cụm Dịch tễ COVID-19 Toàn cầu", "covid19-kmeans-clusters", "4 biểu đồ: Tương quan ca mắc – tử vong, tỉ trọng cụm, bảng tổng hợp 4 nhóm."],
-                ["2", "Phân tích Phân cụm Dịch tễ — Đánh giá Số cụm K & Hồ sơ Cụm", "covid19-kmeans-mining", "6 biểu đồ: Khuỷu tay Inertia, Silhouette & Davies–Bouldin, mặt phẳng PCA 2D, diễn biến tuần."],
-                ["3", "Hệ thống Cảnh báo Sớm Nguy cơ Bùng phát Dịch COVID-19", "covid19-early-warning", "5 biểu đồ: Bản đồ thế giới dự báo 2 tuần tới, đối sánh 3 mô hình, Top 10 yếu tố, bảng xếp hạng QG."],
-                ["4", "Giám sát Thời gian thực — Bệnh nhân Ẩn danh & Tiêm chủng", "covid19-cdc-patients-vaccination", "6 biểu đồ: KPI thời gian thực, ca bệnh theo độ tuổi, cơ cấu bệnh nền, vắc-xin & thống kê tỉnh/thành."],
+                ["2", "Phân tích Phân cụm Dịch tễ — Đánh giá Số cụm K, Hồ sơ Cụm & Chuỗi Markov", "covid19-kmeans-mining", "8 biểu đồ: Khuỷu tay Inertia, Silhouette & Davies–Bouldin, PCA 2D, diễn biến tuần, Ma trận Markov & Dwell Time."],
+                ["3", "Hệ thống Cảnh báo Sớm Nguy cơ Bùng phát Dịch & Bất thường Lịch sử", "covid19-early-warning", "6 biểu đồ: Bản đồ thế giới dự báo 2 tuần tới, đối sánh 3 mô hình, Top 10 yếu tố, bảng xếp hạng QG kèm TreeSHAP, bất thường Isolation Forest."],
+                ["4", "Giám sát Thời gian thực — Bệnh nhân Ẩn danh, Luật Apriori & Ổ dịch Kafka", "covid19-cdc-patients-vaccination", "8 biểu đồ: KPI thời gian thực, độ tuổi, bệnh nền, vắc-xin, thống kê tỉnh/thành, Luật kết hợp Apriori & cảnh báo ổ dịch Kafka."],
             ],
             col_widths_cm=[1.1, 5.5, 4.1, 5.8],
         )
 
         # ======================================================================
-        # CHƯƠNG 7
+        # CHƯƠNG 9
         # ======================================================================
-        add_heading_1(doc, "7. Kiểm thử Chất lượng Phần mềm & Hướng dẫn Vận hành Nhanh")
+        add_heading_1(doc, "9. Kiểm thử Chất lượng Phần mềm & Hướng dẫn Vận hành Nhanh")
         add_body_p(
             doc,
-            "Hệ thống đi kèm bộ kiểm thử đơn vị tự động gồm 23 bài kiểm thử độc lập và các kịch bản trình diễn trực quan:",
+            "Hệ thống đi kèm bộ kiểm thử đơn vị tự động gồm 28 bài kiểm thử độc lập (28/28 PASS) và các kịch bản trình diễn trực quan:",
         )
-        add_bullet_item(doc, "Kiểm thử CDC & Ẩn danh hóa (10/10 tests pass — cdc/test_consumer.py): ", "Kiểm tra giải mã ngày Debezium, cắt bỏ PII bệnh nhân, tạo bản ghi giữ chỗ placeholder, xóa theo khóa chính và rollback giao dịch khi DWH lỗi.")
-        add_bullet_item(doc, "Kiểm thử K-Means & PCA (8/8 tests pass — test_weekly_covid_kmeans.py): ", "Kiểm tra chuẩn hóa dân số, tính bất biến kết quả, tự động chọn K theo đỉnh Silhouette, xử lý biên khi K vượt số điểm phân biệt và thứ tự nhãn cụm.")
-        add_bullet_item(doc, "Kiểm thử Cảnh báo sớm XGBoost (5/5 tests pass — test_covid_early_warning.py): ", "Kiểm chứng gán nhãn đúng trên chuỗi tăng gấp đôi/đi ngang, tính nhân quả nghiêm ngặt (đột biến dữ liệu ở t+1 không làm đổi đặc trưng tại t), khoảng cách purge H tuần và an toàn dữ liệu đơn lớp.")
-        add_bullet_item(doc, "Các kịch bản vận hành chính: ", "Khởi chạy hạ tầng bằng `docker compose up -d --build`; sinh dữ liệu OLTP bằng `python scripts/seed_oltp_data.py`; đồng bộ giao diện Superset bằng `python scripts/init_superset_dashboards.py`; minh họa CDC trực tiếp bằng `./scripts/demo_cdc.ps1` và xuất báo cáo phân tích bằng `python scripts/demo_kmeans.py`.")
+        add_bullet_item(doc, "Kiểm thử CDC, Ẩn danh hóa & Phát hiện Ổ dịch Kafka (11/11 tests pass — cdc/test_consumer.py): ", "Kiểm tra giải mã ngày Debezium, cắt bỏ PII bệnh nhân, tạo bản ghi giữ chỗ placeholder, xóa theo khóa chính, rollback giao dịch khi DWH lỗi và phát hiện cụm ca CONFIRMED_COVID vượt ngưỡng Z-score.")
+        add_bullet_item(doc, "Kiểm thử K-Means, PCA & Chuỗi Markov (test_weekly_covid_kmeans.py, test_covid_cluster_transitions.py): ", "Kiểm tra chuẩn hóa dân số, tính bất biến kết quả, tự động chọn K theo đỉnh Silhouette, ma trận chuyển trạng thái Markov tổng hàng bằng 100% và tính thời gian lưu trú Dwell Time.")
+        add_bullet_item(doc, "Kiểm thử XGBoost, Apriori & Isolation Forest (17/17 ML tests pass trong airflow/tests/): ", "Kiểm chứng gán nhãn đúng trên chuỗi tăng gấp đôi/đi ngang, tính nhân quả nghiêm ngặt, khoảng cách purge H tuần, thuật toán Apriori (Support/Confidence/Lift) và phát hiện bất thường Isolation Forest.")
+        add_bullet_item(doc, "Các kịch bản vận hành chính: ", "Khởi chạy 11 container bằng `docker compose up -d --build`; sinh dữ liệu OLTP bằng `python scripts/seed_oltp_data.py`; đồng bộ giao diện Superset bằng `python scripts/init_superset_dashboards.py`; minh họa CDC & ổ dịch trực tiếp bằng `./scripts/demo_cdc.ps1` và `./scripts/demo_realtime_outbreak.ps1`; trải nghiệm Cổng AI tương tác tại `http://localhost:8501`.")
 
     output_docx.parent.mkdir(parents=True, exist_ok=True)
     doc.save(str(output_docx))

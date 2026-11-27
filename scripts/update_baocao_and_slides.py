@@ -284,7 +284,7 @@ def update_baocao_docx(figs: dict[str, Path]) -> None:
             insert_h2_before(ch8, "7.7. Cổng Web Tương tác AI & Mô phỏng Kịch bản What-If (Streamlit Portal — Port 8501)")
             insert_body_before(
                 ch8,
-                "Bổ trợ cho 4 Dashboard BI trên Superset (đã mở rộng lên 17 Datasets và 26 biểu đồ tiếng Việt), nhóm triển khai container thứ 11 (ai-portal, portal/app.py) tại http://localhost:8501 gồm 4 phân hệ tương tác trực tiếp: (1) Mô phỏng What-If trên mô hình XGBoost thật kèm biểu đồ giải thích TreeSHAP; (2) Tra cứu nguy cơ bệnh nhân khớp trực tiếp tập luật Apriori; (3) Quỹ đạo quốc gia kèm điểm bất thường Isolation Forest & dự phóng Markov P^k; (4) Giám sát biểu ngữ cảnh báo ổ dịch thời gian thực từ Kafka CDC. Tổng bộ kiểm thử đơn vị tự động nâng lên 28/28 Unit Tests PASS (11 CDC + 17 ML).",
+                "Bổ trợ cho 4 Dashboard BI trên Superset (đã mở rộng lên 17 Datasets và 28 biểu đồ tiếng Việt), nhóm triển khai container thứ 11 (ai-portal, portal/app.py) tại http://localhost:8501 gồm 4 phân hệ tương tác trực tiếp: (1) Mô phỏng What-If trên mô hình XGBoost thật kèm biểu đồ giải thích TreeSHAP; (2) Tra cứu nguy cơ bệnh nhân khớp trực tiếp tập luật Apriori; (3) Quỹ đạo quốc gia kèm điểm bất thường Isolation Forest & dự phóng Markov P^k; (4) Giám sát biểu ngữ cảnh báo ổ dịch thời gian thực từ Kafka CDC. Tổng bộ kiểm thử đơn vị tự động nâng lên 28/28 Unit Tests PASS (11 CDC + 17 ML).",
             )
 
         doc.save(str(BAOCAO_DOCX))
@@ -469,46 +469,46 @@ def update_baocao_docx(figs: dict[str, Path]) -> None:
             ch8,
             headers=["STT", "Tên Dashboard Tiếng Việt trên Superset", "Slug đường dẫn", "Số biểu đồ & Trọng tâm hiển thị"],
             rows=[
-                ["1", "Tổng quan Phân cụm Dịch tễ COVID-19 Toàn cầu", "covid19-kmeans-clusters", "4 biểu đồ: Tương quan ca mắc – tử vong, tỉ trọng cụm, bảng tổng hợp 4 nhóm."],
+                ["1", "Tổng quan Phân cụm Dịch tễ COVID-19 Toàn cầu", "covid19-kmeans-clusters", "4 biểu đồ: Tương quan ca mắc – tử vong, tỷ trọng cụm, bảng tổng hợp 4 nhóm."],
                 ["2", "Phân tích Phân cụm — Đánh giá K, PCA & Chuyển cụm Markov", "covid19-kmeans-mining", "8 biểu đồ: Elbow Inertia, Silhouette/DB, PCA 2D, hồ sơ cụm, Ma trận Markov & Dwell Time."],
-                ["3", "Hệ thống Cảnh báo Sớm Nguy cơ Bùng phát Dịch (XGBoost)", "covid19-early-warning", "5 biểu đồ: Bản đồ thế giới dự báo 2 tuần tới, đối sánh 3 mô hình, Top 10 đặc trưng, bảng xếp hạng."],
-                ["4", "Giám sát Thời gian thực & Khai phá Luật Kết hợp (CDC)", "covid19-cdc-patients-vaccination", "8 biểu đồ: KPI thời gian thực, ca bệnh theo tuổi/bệnh nền/vắc-xin, Top 10 Luật kết hợp Apriori."],
+                ["3", "Hệ thống Cảnh báo Sớm Bùng phát (XGBoost + TreeSHAP) & Isolation Forest", "covid19-early-warning", "7 biểu đồ: Bản đồ thế giới dự báo 2 tuần tới, đối sánh 3 mô hình, Top 10 đặc trưng, bảng xếp hạng TreeSHAP, Donut & bảng Isolation Forest."],
+                ["4", "Giám sát Thời gian thực & Khai phá Luật Kết hợp (CDC)", "covid19-cdc-patients-vaccination", "9 biểu đồ: KPI thời gian thực, ca bệnh theo tuổi/bệnh nền/vắc-xin, thống kê Tỉnh / Thành phố, Luật Apriori & bảng cảnh báo ổ dịch Kafka."],
             ],
         )
 
     # 6. Chèn mục 8.6 ngay trước CHƯƠNG 9
     _, ch9 = find_paragraph_by_prefix(doc, "CHƯƠNG 9:", start_idx=120)
     if ch9 is not None:
-        insert_h2_before(ch9, "8.6. Bộ kiểm thử đơn vị tự động (26/26 Unit Tests) & Kiểm định chống rò rỉ")
+        insert_h2_before(ch9, "8.6. Bộ kiểm thử đơn vị tự động (28/28 Unit Tests) & Kiểm định chống rò rỉ")
         insert_body_before(
             ch9,
-            "Bên cạnh các kịch bản kiểm thử tích hợp end-to-end (TC01–TC08), hệ thống bổ sung bộ 26 Unit Tests tự động chạy định kỳ trên Python & container Airflow, đảm bảo 100% pass:",
+            "Bên cạnh các kịch bản kiểm thử tích hợp end-to-end (TC01–TC08), hệ thống bổ sung bộ 28 Unit Tests tự động chạy định kỳ trên Python & container Airflow, đảm bảo 100% pass:",
         )
         insert_table_before(
             doc,
             ch9,
             headers=["Tệp kiểm thử đơn vị", "Số test", "Phạm vi kiểm định cốt lõi", "Kết quả"],
             rows=[
-                ["cdc/test_consumer.py", "10", "Giải mã Debezium, ẩn danh PII bệnh nhân, Placeholder, gỡ connector cũ, rollback lỗi DWH.", "10/10 PASS"],
+                ["cdc/test_consumer.py", "11", "Giải mã Debezium, ẩn danh PII bệnh nhân, Placeholder, gỡ connector cũ, rollback lỗi DWH & phát hiện ổ dịch Kafka.", "11/11 PASS"],
                 ["airflow/tests/test_weekly_covid_kmeans.py", "8", "Chuẩn hóa dân số, đánh giá K = 2..8, chế độ auto-K theo Silhouette, thứ tự nhãn cụm & PCA.", "8/8 PASS"],
                 ["airflow/tests/test_covid_early_warning.py", "5", "Gán nhãn surge, bất biến nhân quả (không rò rỉ t+1), Purged Split H tuần, an toàn đơn lớp.", "5/5 PASS"],
-                ["airflow/tests/test_advanced_data_mining.py", "3", "Tổng xác suất Markov = 1, tính độ dài đợt Dwell Time liên tục, phát hiện luật Apriori Lift cao.", "3/3 PASS"],
+                ["airflow/tests/test_advanced_data_mining.py", "4", "Tổng xác suất Markov = 1, tính độ dài đợt Dwell Time, phát hiện luật Apriori Lift cao & Isolation Forest.", "4/4 PASS"],
             ],
             highlight_row=None,
         )
 
-    # 7. Bổ sung tổng kết 4 trụ cột Data Mining vào cuối mục 9.1 (trước 9.2)
+    # 7. Bổ sung tổng kết 5 trụ cột Data Mining vào cuối mục 9.1 (trước 9.2)
     _, sec92 = find_paragraph_by_prefix(doc, "9.2.", start_idx=120)
     if sec92 is not None:
         insert_bullet_before(
             sec92,
-            "Hoàn thiện trọn bộ 4 kỹ thuật Khai phá dữ liệu kinh điển trên cùng một Data Platform: ",
-            "Phân cụm K-Means nâng cao + PCA 2D, Phân lớp Cảnh báo sớm XGBoost (ROC-AUC 0,925, PR-AUC 0,270, kiểm chứng Purged Split & Ablation), Khai phá Chuỗi chuyển dịch cụm Markov & Dwell Time, và Khai phá Luật kết hợp Apriori trên dữ liệu bệnh nhân ẩn danh CDC.",
+            "Hoàn thiện trọn bộ 5 trụ cột Khai phá dữ liệu trên cùng một Data Platform: ",
+            "Phân cụm K-Means nâng cao + PCA 2D, Phân lớp Cảnh báo sớm XGBoost (ROC-AUC 0,925, PR-AUC 0,270, kiểm chứng Purged Split & Ablation), Khai phá Chuỗi chuyển dịch cụm Markov & Dwell Time, Khai phá Luật kết hợp Apriori trên bệnh nhân CDC, và Phát hiện bất thường kép (Isolation Forest + Kafka Realtime) kèm giải thích TreeSHAP.",
         )
         insert_bullet_before(
             sec92,
             "Tự động hóa 100% tầng trình diễn & kiểm thử: ",
-            "Khởi tạo tự động 15 Dataset, 25 biểu đồ và 4 Dashboard tiếng Việt qua Superset REST API, đi kèm 26/26 Unit Tests tự động.",
+            "Khởi tạo tự động 17 Dataset, 28 biểu đồ trên 4 Dashboard Superset kết hợp Cổng Web AI Streamlit (:8501), đi kèm 28/28 Unit Tests tự động.",
         )
 
     doc.save(str(BAOCAO_DOCX))

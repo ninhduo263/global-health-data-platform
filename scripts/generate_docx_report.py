@@ -663,8 +663,8 @@ def build_docx(dwh: dict, output_docx: Path) -> None:
     p_desc.alignment = WD_ALIGN_PARAGRAPH.CENTER
     p_desc.paragraph_format.space_after = Pt(12)
     r = p_desc.add_run(
-        "Tích hợp Batch ETL (Apache Airflow, MinIO) • Đồng bộ Thời gian thực ẩn danh PII (Debezium, Kafka)\n"
-        "Kho dữ liệu Snowflake (PostgreSQL) • Phân cụm K-Means & PCA • Cảnh báo sớm XGBoost • Apache Superset"
+        "Tích hợp Batch ETL (Apache Airflow, MinIO) • Đồng bộ Thời gian thực ẩn danh PII & Ổ dịch (Debezium, Kafka)\n"
+        "Kho dữ liệu Snowflake (PostgreSQL) • 5 Mô hình Data Mining (K-Means/PCA, Markov, XGBoost/TreeSHAP, Apriori, Isolation Forest) • Superset & AI Portal"
     )
     set_run_font(r, size_pt=11.0, italic=True, color=SLATE)
 
@@ -678,7 +678,7 @@ def build_docx(dwh: dict, output_docx: Path) -> None:
             ["Hồ sơ bệnh nhân nội bộ đã đồng bộ ẩn danh", f"{counts['patients']:,} bệnh nhân", "MySQL OLTP → Debezium → Kafka → dim_patient"],
             ["Lượt tiêm chủng nội bộ đồng bộ thời gian thực", f"{counts['vaccinations']:,} mũi tiêm", "MySQL OLTP → Debezium → Kafka → fact_vaccination"],
             ["Độ chính xác Cảnh báo sớm bùng phát (XGBoost)", "ROC-AUC = 0,925 | PR-AUC = 0,270", "Kiểm thử độc lập 11.006 dòng (Purged Time Split)"],
-            ["Hệ thống kiểm thử tự động & trực quan hóa", "28/28 Unit Tests | 4 Dashboards + AI Portal", "26 biểu đồ Superset + Cổng Web Streamlit (:8501)"],
+            ["Hệ thống kiểm thử tự động & trực quan hóa", "28/28 Unit Tests | 4 Dashboards + AI Portal", "28 biểu đồ Superset + Cổng Web Streamlit (:8501)"],
         ],
         col_widths_cm=[6.5, 4.2, 5.8],
     )
@@ -705,13 +705,13 @@ def build_docx(dwh: dict, output_docx: Path) -> None:
         )
         add_body_p(
             doc,
-            "Dự án được thiết kế nhằm xây dựng một nền tảng dữ liệu hoàn chỉnh (End-to-End Data Platform) kết hợp chặt chẽ giữa Kỹ thuật dữ liệu hiện đại và hai bài toán Khai phá dữ liệu chuyên sâu:",
+            "Dự án được thiết kế nhằm xây dựng một nền tảng dữ liệu hoàn chỉnh (End-to-End Data Platform) kết hợp chặt chẽ giữa Kỹ thuật dữ liệu hiện đại và năm bài toán Khai phá dữ liệu chuyên sâu:",
         )
         add_bullet_item(doc, "Hợp nhất dữ liệu đa luồng (Hybrid Batch + Streaming): ", "Tự động thu thập dữ liệu toàn cầu theo lô qua Apache Airflow và MinIO Data Lake, đồng thời bắt biến động giao dịch nội bộ dưới 2 giây qua Debezium Binlog & Apache Kafka.")
         add_bullet_item(doc, "Bảo vệ quyền riêng tư theo thiết kế (Privacy by Design): ", "Loại bỏ triệt để họ tên thật (full_name) và mã băm công dân (citizen_hash) ngay trên đường truyền trước khi nạp vào Kho dữ liệu phân tích.")
-        add_bullet_item(doc, "Khai phá tri thức không giám sát (K-Means nâng cao & PCA): ", "Đánh giá định lượng dải số cụm K = 2..8 bằng 4 chỉ số độc lập, tự động diễn giải tâm cụm thành nhãn dịch tễ tiếng Việt và chiếu xuống không gian PCA 2 chiều.")
-        add_bullet_item(doc, "Cảnh báo sớm có giám sát (XGBoost Surge Prediction): ", "Chuyển hóa kết quả phân cụm và 17 đặc trưng động lượng – miễn dịch thành mô hình dự báo nguy cơ bùng phát dịch trước 2 tuần, kiểm định nghiêm ngặt chống rò rỉ thời gian.")
-        add_bullet_item(doc, "Trực quan hóa BI tự động hóa 100% tiếng Việt: ", "Cung cấp công cụ đồng bộ qua REST API tạo lập tự động 12 Dataset, 21 biểu đồ và 4 bảng điều khiển tiếng Việt trên Apache Superset.")
+        add_bullet_item(doc, "Khai phá tri thức không giám sát (K-Means nâng cao, PCA & Chuỗi Markov): ", "Đánh giá định lượng dải số cụm K = 2..8 bằng 4 chỉ số độc lập, tự động diễn giải tâm cụm thành nhãn dịch tễ tiếng Việt, chiếu mặt phẳng PCA 2D và ước lượng ma trận chuyển trạng thái Markov + Dwell Time.")
+        add_bullet_item(doc, "Cảnh báo sớm có giám sát, Luật kết hợp & Phát hiện bất thường kép: ", "Dự báo nguy cơ bùng phát trước 2 tuần bằng XGBoost + TreeSHAP, khai phá luật kết hợp Apriori trên bệnh nhân CDC và phát hiện bất thường bằng Isolation Forest + Kafka Streaming Z-score.")
+        add_bullet_item(doc, "Trực quan hóa BI & Cổng AI tương tác 100% tiếng Việt: ", "Đồng bộ tự động 17 Dataset, 28 biểu đồ trên 4 Dashboard Apache Superset kết hợp Cổng Web Streamlit tương tác trực tiếp tại cổng 8501.")
 
         # ======================================================================
         # CHƯƠNG 2
@@ -719,9 +719,9 @@ def build_docx(dwh: dict, output_docx: Path) -> None:
         add_heading_1(doc, "2. Kiến trúc Kỹ thuật Tổng thể 5 Tầng")
         add_body_p(
             doc,
-            "Toàn bộ hạ tầng gồm 10 dịch vụ container được đóng gói đồng nhất trên Docker Compose, chia thành 5 tầng chức năng tách biệt từ nguồn dữ liệu đến giao diện phân tích:",
+            "Toàn bộ hạ tầng gồm 11 dịch vụ container được đóng gói đồng nhất trên Docker Compose, chia thành 5 tầng chức năng tách biệt từ nguồn dữ liệu đến giao diện phân tích:",
         )
-        add_figure(doc, arch_png, "Hình 1. Sơ đồ kiến trúc tổng thể 5 tầng kết hợp Batch ETL, Real-time CDC và 2 mô hình Data Mining.")
+        add_figure(doc, arch_png, "Hình 1. Sơ đồ kiến trúc tổng thể 5 tầng kết hợp Batch ETL, Real-time CDC và 5 trụ cột Data Mining.")
 
         add_styled_table(
             doc,
@@ -730,12 +730,13 @@ def build_docx(dwh: dict, output_docx: Path) -> None:
                 ["mysql-oltp", "MySQL 8.0", "3307", "CSDL giao dịch nội bộ (điểm tiêm, bệnh nhân, mũi tiêm), bật ROW binlog."],
                 ["zookeeper & kafka", "Debezium 2.5", "2181 / 9092", "Hàng đợi thông điệp phân tán lưu trữ 3 topic biến động CDC."],
                 ["debezium", "Debezium Connect 2.5", "8083", "Connector v2 đọc trực tiếp binlog MySQL không làm chậm OLTP."],
-                ["cdc-consumer", "Python Kafka Consumer", "(Nội bộ)", "Gỡ connector cũ, ẩn danh PII, xử lý placeholder và upsert DWH."],
+                ["cdc-consumer", "Python Kafka Consumer", "(Nội bộ)", "Ẩn danh PII, xử lý placeholder, phát hiện ổ dịch Z-score và upsert DWH."],
                 ["minio", "MinIO Object Storage", "9000 / 9001", "Data Lake chuẩn S3 lưu trữ bản chụp dữ liệu thô phân vùng theo ngày."],
                 ["postgres-dwh", "PostgreSQL 15 Alpine", "5433", "Kho dữ liệu trung tâm Snowflake Schema và lưu trữ đầu ra Data Mining."],
-                ["dwh-migrate", "PSQL Migration Runner", "(Chạy 1 lần)", "Thực thi kịch bản nâng cấp lược đồ và View tiếng Việt hoàn toàn idempotent."],
-                ["airflow-*", "Apache Airflow 2.9.3", "8081", "Điều phối pipeline ETL, huấn luyện K-Means và XGBoost theo lịch hàng ngày."],
-                ["superset", "Apache Superset 3.1.1", "8089", "Nền tảng BI hiển thị 4 Dashboard tiếng Việt phục vụ giám sát và báo cáo."],
+                ["dwh-migrate", "PSQL Migration Runner", "(Chạy 1 lần)", "Thực thi kịch bản nâng cấp lược đồ và 17 View tiếng Việt idempotent."],
+                ["airflow-*", "Apache Airflow 2.9.3", "8081", "Điều phối pipeline ETL và huấn luyện 5 mô hình Data Mining hàng ngày."],
+                ["superset", "Apache Superset 3.1.1", "8089", "Nền tảng BI hiển thị 4 Dashboard tiếng Việt (17 Datasets, 28 biểu đồ)."],
+                ["ai-portal", "Streamlit Python 3.11", "8501", "Cổng AI tương tác 4 tab: What-If XGBoost + TreeSHAP, Apriori, Markov, Kafka."],
             ],
             col_widths_cm=[3.2, 3.6, 2.2, 7.5],
         )
@@ -972,19 +973,19 @@ def build_docx(dwh: dict, output_docx: Path) -> None:
         add_bullet_item(doc, "Cảnh báo Ổ dịch Thời gian thực trên Kafka CDC: ", "StreamingOutbreakDetector giám sát cửa sổ trượt 300s các ca CONFIRMED_COVID theo tỉnh; khi phát hiện đợt bùng phát cục bộ (VD: Hà Nội Z-score = 4,95) lập tức ghi vào dwh.fact_realtime_anomalies trong < 3 giây.")
         add_bullet_item(doc, "Giải thích Cục bộ TreeSHAP & Cổng Web Streamlit (http://localhost:8501): ", "Cung cấp 4 tab tương tác trực tiếp: Mô phỏng What-If trên mô hình XGBoost thật kèm biểu đồ TreeSHAP, Tra cứu nguy cơ bệnh nhân theo luật Apriori, Quỹ đạo quốc gia + dự phóng Markov P^k và Giám sát ổ dịch realtime.")
 
-        add_heading_1(doc, "8. Hệ thống 4 Bảng Điều khiển Tiếng Việt trên Apache Superset (26 Biểu đồ)")
+        add_heading_1(doc, "8. Hệ thống 4 Bảng Điều khiển Tiếng Việt trên Apache Superset (28 Biểu đồ)")
         add_body_p(
             doc,
-            "Thông qua kịch bản tự động hóa REST API (scripts/init_superset_dashboards.py), toàn bộ 17 Dataset/View trong DWH được đăng ký, gán từ điển nhãn cột tiếng Việt (verbose_name) và dựng thành 26 biểu đồ phân bổ trên 4 Dashboard chuyên đề:",
+            "Thông qua kịch bản tự động hóa REST API (scripts/init_superset_dashboards.py), toàn bộ 17 Dataset/View trong DWH được đăng ký, gán từ điển nhãn cột tiếng Việt (verbose_name) và dựng thành 28 biểu đồ phân bổ trên 4 Dashboard chuyên đề:",
         )
         add_styled_table(
             doc,
             headers=["STT", "Tên Bảng điều khiển (Dashboard Tiếng Việt)", "Đường dẫn (Slug)", "Số biểu đồ & Nội dung chính"],
             rows=[
-                ["1", "Tổng quan Phân cụm Dịch tễ COVID-19 Toàn cầu", "covid19-kmeans-clusters", "4 biểu đồ: Tương quan ca mắc – tử vong, tỉ trọng cụm, bảng tổng hợp 4 nhóm."],
+                ["1", "Tổng quan Phân cụm Dịch tễ COVID-19 Toàn cầu", "covid19-kmeans-clusters", "4 biểu đồ: Tương quan ca mắc – tử vong, tỷ trọng cụm, bảng tổng hợp 4 nhóm."],
                 ["2", "Phân tích Phân cụm Dịch tễ — Đánh giá Số cụm K, Hồ sơ Cụm & Chuỗi Markov", "covid19-kmeans-mining", "8 biểu đồ: Khuỷu tay Inertia, Silhouette & Davies–Bouldin, PCA 2D, diễn biến tuần, Ma trận Markov & Dwell Time."],
-                ["3", "Hệ thống Cảnh báo Sớm Nguy cơ Bùng phát Dịch & Bất thường Lịch sử", "covid19-early-warning", "6 biểu đồ: Bản đồ thế giới dự báo 2 tuần tới, đối sánh 3 mô hình, Top 10 yếu tố, bảng xếp hạng QG kèm TreeSHAP, bất thường Isolation Forest."],
-                ["4", "Giám sát Thời gian thực — Bệnh nhân Ẩn danh, Luật Apriori & Ổ dịch Kafka", "covid19-cdc-patients-vaccination", "8 biểu đồ: KPI thời gian thực, độ tuổi, bệnh nền, vắc-xin, thống kê tỉnh/thành, Luật kết hợp Apriori & cảnh báo ổ dịch Kafka."],
+                ["3", "Hệ thống Cảnh báo Sớm Bùng phát (XGBoost + TreeSHAP) & Isolation Forest", "covid19-early-warning", "7 biểu đồ: Bản đồ thế giới dự báo 2 tuần tới, đối sánh 3 mô hình, Top 10 yếu tố, bảng xếp hạng QG kèm TreeSHAP, Donut & bảng bất thường Isolation Forest."],
+                ["4", "Giám sát Thời gian thực — Bệnh nhân Ẩn danh, Luật Apriori & Ổ dịch Kafka", "covid19-cdc-patients-vaccination", "9 biểu đồ: KPI thời gian thực, độ tuổi, bệnh nền, vắc-xin, thống kê Tỉnh / Thành phố, Top 10 & bảng Luật Apriori, bảng cảnh báo ổ dịch Kafka."],
             ],
             col_widths_cm=[1.1, 5.5, 4.1, 5.8],
         )
